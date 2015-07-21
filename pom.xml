@@ -142,7 +142,7 @@
     <hive.version.short>1.2.1</hive.version.short>
     <derby.version>10.10.1.1</derby.version>
     <parquet.version>1.7.0</parquet.version>
-    <hive.parquet.version>1.6.0</hive.parquet.version>
+    <hive.parquet.version>1.6.0-nflx</hive.parquet.version>
     <jblas.version>1.2.4</jblas.version>
     <jetty.version>8.1.14.v20131031</jetty.version>
     <orbit.version>3.0.0.v201112011016</orbit.version>
@@ -306,6 +306,18 @@
       <id>twttr-repo</id>
       <name>Twttr Repository</name>
       <url>http://maven.twttr.com</url>
+      <releases>
+        <enabled>true</enabled>
+      </releases>
+      <snapshots>
+        <enabled>false</enabled>
+      </snapshots>
+    </repository>
+    <!-- For parquet 1.6.0-nflx -->
+    <repository>
+      <id>ext-releases-local-pom</id>
+      <name>Netflix Artifactory</name>
+      <url>http://artifacts.netflix.com/ext-releases-local-pom</url>
       <releases>
         <enabled>true</enabled>
       </releases>
