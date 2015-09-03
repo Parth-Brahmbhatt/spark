@@ -1,8 +1,17 @@
 #!/bin/bash
-export MALLOC_ARENA_MAX=4
+USER_ARGS=${@:2}
+RE="--jars ([^ ]+)"
+JARS_TO_SHIP="s3://atlas.us-east-1.prod.netflix.net/jars/atlas-hive.jar,$SPARK_CONF_DIR/hive-site.xml"
+if [[ $USER_ARGS =~ $RE ]]
+then
+    JARS_TO_SHIP=$JARS_TO_SHIP,${BASH_REMATCH[1]}
+    USER_ARGS=${USER_ARGS/${BASH_REMATCH[0]}/}
+fi
+
 export MASTER_NODE_ADDR=`sed -n 's/.*<name>yarn.resourcemanager.address<\/name><value>\(.*\):\(.*\)<\/value>.*/\1/p' $HADOOP_CONF_DIR/yarn-site.xml` 
 export SPARK_DRIVER_CLASSPATH="$SPARK_CONF_DIR:$SPARK_HOME/lib/*:$($HADOOP_HOME/bin/hadoop classpath)"
 export SPARK_LOCAL_HOSTNAME=$EC2_HOSTNAME
+export MALLOC_ARENA_MAX=4
 
 # When spark shell runs on genie, SPARK_LOG_DIR/FILE are not set
 if [ -z "$SPARK_LOG_DIR" ]
@@ -21,9 +30,10 @@ export SPARK_LOG_FILE_PATH=$SPARK_LOG_DIR/$SPARK_LOG_FILE
 exec $SPARK_HOME/bin/$1 \
     --conf spark.driver.host=$EC2_HOSTNAME \
     --conf spark.yarn.historyServer.address=$MASTER_NODE_ADDR:18080 \
+    --jars $JARS_TO_SHIP \
     --driver-class-path $SPARK_DRIVER_CLASSPATH \
     --driver-java-options \
       "-Djava.io.tmpdir=$CURRENT_JOB_TMP_DIR -Dspark.log.path=$SPARK_LOG_FILE_PATH -Dlog4j.configuration=file:$SPARK_HOME/conf/log4j.properties" \
     --driver-memory 1500m \
     --properties-file $SPARK_HOME/conf/spark-defaults.conf \
-    ${@:2}
+    $USER_ARGS

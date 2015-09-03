@@ -1,8 +1,19 @@
 #!/bin/bash
-export MALLOC_ARENA_MAX=4
+USER_ARGS=${@}
+RE="--jars ([^ ]+)"
+# TODO: atlas-hive.jar shouldn't be shipped from lib dir because it is not scala-2.10 compatible.
+# Insight team uploaded a scala-2.11 compatible jar on s3 but hasn't published it to artifactory.
+# Until it is available on artifactory, we should ship it directly from s3.
+JARS_TO_SHIP="`ls -1 $SPARK_HOME/lib/datanucleus* | tr '\n' ','`$SPARK_HOME/lib/hadoop-mapreduce-client-core-2.4.0.jar,s3://atlas.us-east-1.prod.netflix.net/jars/atlas-hive.jar,$SPARK_CONF_DIR/hive-site.xml"
+if [[ $USER_ARGS =~ $RE ]]
+then
+    JARS_TO_SHIP=$JARS_TO_SHIP,${BASH_REMATCH[1]}
+    USER_ARGS=${USER_ARGS/${BASH_REMATCH[0]}/}
+fi
+
 export MASTER_NODE_ADDR=`sed -n 's/.*<name>yarn.resourcemanager.address<\/name><value>\(.*\):\(.*\)<\/value>.*/\1/p' $HADOOP_CONF_DIR/yarn-site.xml` 
-export JARS_TO_SHIP="`ls -1 $SPARK_HOME/lib/* | grep -v spark-assembly | tr '\n' ','`$SPARK_CONF_DIR/hive-site.xml"
 export SPARK_SUBMIT_OPTS="-Djava.io.tmpdir=$CURRENT_JOB_TMP_DIR -cp $SPARK_HOME/lib/*:$($HADOOP_HOME/bin/hadoop classpath)"
+export MALLOC_ARENA_MAX=4
 
 exec $SPARK_HOME/bin/spark-submit \
     --conf spark.yarn.historyServer.address=$MASTER_NODE_ADDR:18080 \
@@ -12,4 +23,4 @@ exec $SPARK_HOME/bin/spark-submit \
     --driver-java-options -XX:MaxPermSize=512m \
     --driver-memory 5120m \
     --properties-file $SPARK_HOME/conf/spark-defaults.conf \
-    $@
+    $USER_ARGS

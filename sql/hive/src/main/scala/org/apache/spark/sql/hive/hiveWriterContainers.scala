@@ -17,12 +17,17 @@
 
 package org.apache.spark.sql.hive
 
+import java.io.ObjectOutputStream
 import java.text.NumberFormat
-import java.util.Date
+import java.util.{Date, Map, HashMap}
 
 import scala.collection.mutable
+import scala.util.matching.Regex
 
-import org.apache.hadoop.fs.Path
+import com.netflix.dse.mds.PartitionMetrics
+import com.netflix.dse.storage.output.{StorageHelper, DeltaOutputCommitter}
+
+import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars
 import org.apache.hadoop.hive.ql.exec.{FileSinkOperator, Utilities}
 import org.apache.hadoop.hive.ql.io.{HiveFileFormatUtils, HiveOutputFormat}
@@ -45,10 +50,17 @@ import org.apache.spark.util.SerializableJobConf
  */
 private[hive] class SparkHiveWriterContainer(
     jobConf: JobConf,
-    fileSinkConf: FileSinkDesc)
+    fileSinkConf: FileSinkDesc,
+    franklinTblName: String,
+    partColNames: Array[String])
   extends Logging
   with SparkHadoopMapRedUtil
   with Serializable {
+
+  import SparkHiveWriterContainer._
+
+  private val defaultPartName = jobConf.get(
+    ConfVars.DEFAULTPARTITIONNAME.varname, ConfVars.DEFAULTPARTITIONNAME.defaultStrVal)
 
   private val now = new Date()
   private val tableDesc: TableDesc = fileSinkConf.getTableInfo
@@ -58,17 +70,25 @@ private[hive] class SparkHiveWriterContainer(
     HiveTableUtil.configureJobPropertiesForStorageHandler(tableDesc, jobConf, false)
     Utilities.copyTableJobPropertiesToConf(tableDesc, jobConf)
   }
-  protected val conf = new SerializableJobConf(jobConf)
+  private val conf = new SerializableJobConf(jobConf)
+  private val finalLocation: String = fileSinkConf.getDirName
+  private val partitionMetadata: Map[String, PartitionMetrics] = new HashMap()
 
   private var jobID = 0
   private var splitID = 0
   private var attemptID = 0
   private var jID: SerializableWritable[JobID] = null
   private var taID: SerializableWritable[TaskAttemptID] = null
+  private val batchidPattern: Regex = "(.*)/batchid=[\\d]+$".r
 
-  @transient private var writer: FileSinkOperator.RecordWriter = null
-  @transient protected lazy val committer = conf.value.getOutputCommitter
-  @transient protected lazy val jobContext = newJobContext(conf.value, jID.value)
+  @transient private var writers: mutable.HashMap[String, FileSinkOperator.RecordWriter] = _
+  @transient private lazy val committer = new DeltaOutputCommitter(
+    franklinTblName,
+    getUniqueId(),
+    getFinalLocation(),
+    true,
+    null)
+  @transient private lazy val jobContext = newJobContext(conf.value, jID.value)
   @transient private lazy val taskContext = newTaskAttemptContext(conf.value, taID.value)
   @transient private lazy val outputFormat =
     conf.value.getOutputFormat.asInstanceOf[HiveOutputFormat[AnyRef, Writable]]
@@ -86,7 +106,28 @@ private[hive] class SparkHiveWriterContainer(
     initWriters()
   }
 
-  protected def getOutputName: String = {
+  private def getUniqueId(): String = {
+    return conf.value.get("uuid")
+  }
+
+  private def getBatchId(): String = {
+    return conf.value.get("batchid")
+  }
+
+  private def getFinalLocation(): String = {
+    finalLocation match {
+      case batchidPattern(rootPath) =>
+        // If there is already a batchid subdir in finalLocation, remove it
+        // since a new batchid subdir will be inserted by dynamicPartPath.
+        // This is needed for non-partitioned tables.
+        rootPath
+      case _ =>
+        // If not, use finalLocation as is.
+        finalLocation
+    }
+  }
+
+  private def getOutputName: String = {
     val numberFormat = NumberFormat.getInstance()
     numberFormat.setMinimumIntegerDigits(5)
     numberFormat.setGroupingUsed(false)
@@ -94,33 +135,107 @@ private[hive] class SparkHiveWriterContainer(
     "part-" + numberFormat.format(splitID) + extension
   }
 
-  def getLocalFileWriter(row: InternalRow, schema: StructType): FileSinkOperator.RecordWriter = {
-    writer
+  def getLocalFileWriter(row: InternalRow, schema: StructType):
+      FileSinkOperator.RecordWriter = {
+    def convertToHiveRawString(col: String, value: Any): String = {
+      val raw = String.valueOf(value)
+      schema(col).dataType match {
+        case DateType => DateTimeUtils.dateToString(raw.toInt)
+        case _: DecimalType => BigDecimal(raw).toString()
+        case _ => raw
+      }
+    }
+
+    val dynamicPartPath =
+      if (partColNames != null) {
+        val nonDynamicPartLen = row.numFields - partColNames.length
+        partColNames.zipWithIndex.map { case (colName, i) =>
+          val rawVal = row.get(nonDynamicPartLen + i, schema(colName).dataType)
+          val string = if (rawVal == null) null else convertToHiveRawString(colName, rawVal)
+          val colString =
+            if (string == null || string.isEmpty) {
+              defaultPartName
+            } else {
+              FileUtils.escapePathName(string, defaultPartName)
+            }
+          s"/$colName=$colString"
+        }.mkString + s"/batchid=${getBatchId()}"
+      } else {
+        s"/batchid=${getBatchId()}"
+      }
+
+    // TODO: Add dummy partition metrics. DeltaOutputCommitter reads the metadata file and
+    // determines which partitions in franklin should get updated. So even if we don't have
+    // partition metrics yet, we add dummy one for now.
+    if (!partitionMetadata.containsKey(dynamicPartPath)) {
+      logInfo(s"Add ${dynamicPartPath} to partition metadata map")
+      partitionMetadata.put(dynamicPartPath, null)
+    }
+
+    def newWriter(): FileSinkOperator.RecordWriter = {
+      val newFileSinkDesc = new FileSinkDesc(
+        fileSinkConf.getDirName + dynamicPartPath,
+        fileSinkConf.getTableInfo,
+        fileSinkConf.getCompressed)
+      newFileSinkDesc.setCompressCodec(fileSinkConf.getCompressCodec)
+      newFileSinkDesc.setCompressType(fileSinkConf.getCompressType)
+
+      val path = {
+        val sh: StorageHelper = new StorageHelper(taskContext, getUniqueId(), getFinalLocation())
+        val base: String = sh.getBaseTaskAttemptTempLocation
+        assert(base != null, "Undefined job output-path")
+        val workPath = new Path(base, dynamicPartPath.stripPrefix("/"))
+        new Path(workPath, getOutputName)
+      }
+
+      HiveFileFormatUtils.getHiveRecordWriter(
+        conf.value,
+        fileSinkConf.getTableInfo,
+        conf.value.getOutputValueClass.asInstanceOf[Class[Writable]],
+        newFileSinkDesc,
+        path,
+        Reporter.NULL)
+    }
+
+    writers.getOrElseUpdate(dynamicPartPath, newWriter())
   }
 
-  def close() {
-    // Seems the boolean value passed into close does not matter.
-    writer.close(false)
+  def close(): Unit = {
+    writers.values.foreach(_.close(false))
     commit()
   }
 
   def commitJob() {
+    // This is a hack to avoid writing _SUCCESS mark file. In lower versions of Hadoop (e.g. 1.0.4),
+    // semantics of FileSystem.globStatus() is different from higher versions (e.g. 2.4.1) and will
+    // include _SUCCESS file when glob'ing for dynamic partition data files.
+    //
+    // Better solution is to add a step similar to what Hive FileSinkOperator.jobCloseOp does:
+    // calling something like Utilities.mvFileToFinalPath to cleanup the output directory and then
+    // load it with loadDynamicPartitions/loadPartition/loadTable.
+    val oldMarker = jobConf.getBoolean(SUCCESSFUL_JOB_OUTPUT_DIR_MARKER, true)
+    jobConf.setBoolean(SUCCESSFUL_JOB_OUTPUT_DIR_MARKER, false)
     committer.commitJob(jobContext)
+    jobConf.setBoolean(SUCCESSFUL_JOB_OUTPUT_DIR_MARKER, oldMarker)
   }
 
-  protected def initWriters() {
-    // NOTE this method is executed at the executor side.
-    // For Hive tables without partitions or with only static partitions, only 1 writer is needed.
-    writer = HiveFileFormatUtils.getHiveRecordWriter(
-      conf.value,
-      fileSinkConf.getTableInfo,
-      conf.value.getOutputValueClass.asInstanceOf[Class[Writable]],
-      fileSinkConf,
-      FileOutputFormat.getTaskOutputPath(conf.value, getOutputName),
-      Reporter.NULL)
+  private def initWriters() {
+    // NOTE: This method is executed at the executor side.
+    // Actual writers are created for each dynamic partition on the fly.
+    writers = mutable.HashMap.empty[String, FileSinkOperator.RecordWriter]
   }
 
-  protected def commit() {
+  private def commit() {
+    // In DseStorage, metadata is written by PartitionedRecordWriter. But since in Spark.
+    // we don't use it, we instead write metadata in commit task.
+    val sh: StorageHelper = new StorageHelper(taskContext, getUniqueId(), getFinalLocation())
+    val base: String = sh.getBaseTaskAttemptTempLocation
+    val file: Path = new Path(base, "_metadata")
+    val fs: FileSystem = file.getFileSystem(conf.value)
+    val os: ObjectOutputStream = new ObjectOutputStream(fs.create(file, true))
+    os.writeObject(partitionMetadata)
+    os.close
+
     SparkHadoopMapRedUtil.commitTask(committer, taskContext, jobID, splitID)
   }
 
@@ -144,6 +259,8 @@ private[hive] class SparkHiveWriterContainer(
 }
 
 private[hive] object SparkHiveWriterContainer {
+  val SUCCESSFUL_JOB_OUTPUT_DIR_MARKER = "mapreduce.fileoutputcommitter.marksuccessfuljobs"
+
   def createPathFromString(path: String, conf: JobConf): Path = {
     if (path == null) {
       throw new IllegalArgumentException("Output path is null")
@@ -154,98 +271,5 @@ private[hive] object SparkHiveWriterContainer {
       throw new IllegalArgumentException("Incorrectly formatted output path")
     }
     outputPath.makeQualified(fs.getUri, fs.getWorkingDirectory)
-  }
-}
-
-private[spark] object SparkHiveDynamicPartitionWriterContainer {
-  val SUCCESSFUL_JOB_OUTPUT_DIR_MARKER = "mapreduce.fileoutputcommitter.marksuccessfuljobs"
-}
-
-private[spark] class SparkHiveDynamicPartitionWriterContainer(
-    jobConf: JobConf,
-    fileSinkConf: FileSinkDesc,
-    dynamicPartColNames: Array[String])
-  extends SparkHiveWriterContainer(jobConf, fileSinkConf) {
-
-  import SparkHiveDynamicPartitionWriterContainer._
-
-  private val defaultPartName = jobConf.get(
-    ConfVars.DEFAULTPARTITIONNAME.varname, ConfVars.DEFAULTPARTITIONNAME.defaultStrVal)
-
-  @transient private var writers: mutable.HashMap[String, FileSinkOperator.RecordWriter] = _
-
-  override protected def initWriters(): Unit = {
-    // NOTE: This method is executed at the executor side.
-    // Actual writers are created for each dynamic partition on the fly.
-    writers = mutable.HashMap.empty[String, FileSinkOperator.RecordWriter]
-  }
-
-  override def close(): Unit = {
-    writers.values.foreach(_.close(false))
-    commit()
-  }
-
-  override def commitJob(): Unit = {
-    // This is a hack to avoid writing _SUCCESS mark file. In lower versions of Hadoop (e.g. 1.0.4),
-    // semantics of FileSystem.globStatus() is different from higher versions (e.g. 2.4.1) and will
-    // include _SUCCESS file when glob'ing for dynamic partition data files.
-    //
-    // Better solution is to add a step similar to what Hive FileSinkOperator.jobCloseOp does:
-    // calling something like Utilities.mvFileToFinalPath to cleanup the output directory and then
-    // load it with loadDynamicPartitions/loadPartition/loadTable.
-    val oldMarker = conf.value.getBoolean(SUCCESSFUL_JOB_OUTPUT_DIR_MARKER, true)
-    conf.value.setBoolean(SUCCESSFUL_JOB_OUTPUT_DIR_MARKER, false)
-    super.commitJob()
-    conf.value.setBoolean(SUCCESSFUL_JOB_OUTPUT_DIR_MARKER, oldMarker)
-  }
-
-  override def getLocalFileWriter(row: InternalRow, schema: StructType)
-    : FileSinkOperator.RecordWriter = {
-    def convertToHiveRawString(col: String, value: Any): String = {
-      val raw = String.valueOf(value)
-      schema(col).dataType match {
-        case DateType => DateTimeUtils.dateToString(raw.toInt)
-        case _: DecimalType => BigDecimal(raw).toString()
-        case _ => raw
-      }
-    }
-
-    val nonDynamicPartLen = row.numFields - dynamicPartColNames.length
-    val dynamicPartPath = dynamicPartColNames.zipWithIndex.map { case (colName, i) =>
-      val rawVal = row.get(nonDynamicPartLen + i, schema(colName).dataType)
-      val string = if (rawVal == null) null else convertToHiveRawString(colName, rawVal)
-      val colString =
-        if (string == null || string.isEmpty) {
-          defaultPartName
-        } else {
-          FileUtils.escapePathName(string, defaultPartName)
-        }
-      s"/$colName=$colString"
-    }.mkString
-
-    def newWriter(): FileSinkOperator.RecordWriter = {
-      val newFileSinkDesc = new FileSinkDesc(
-        fileSinkConf.getDirName + dynamicPartPath,
-        fileSinkConf.getTableInfo,
-        fileSinkConf.getCompressed)
-      newFileSinkDesc.setCompressCodec(fileSinkConf.getCompressCodec)
-      newFileSinkDesc.setCompressType(fileSinkConf.getCompressType)
-
-      // use the path like ${hive_tmp}/_temporary/${attemptId}/
-      // to avoid write to the same file when `spark.speculation=true`
-      val path = FileOutputFormat.getTaskOutputPath(
-        conf.value,
-        dynamicPartPath.stripPrefix("/") + "/" + getOutputName)
-
-      HiveFileFormatUtils.getHiveRecordWriter(
-        conf.value,
-        fileSinkConf.getTableInfo,
-        conf.value.getOutputValueClass.asInstanceOf[Class[Writable]],
-        newFileSinkDesc,
-        path,
-        Reporter.NULL)
-    }
-
-    writers.getOrElseUpdate(dynamicPartPath, newWriter())
   }
 }

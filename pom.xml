@@ -325,6 +325,29 @@
         <enabled>false</enabled>
       </snapshots>
     </repository>
+    <!-- For bdurl, benjamin, dse-metric, procrustes, and dse_pig -->
+    <repository>
+      <id>libs-candidates-local</id>
+      <name>Netflix Artifactory</name>
+      <url>http://artifacts.netflix.com/libs-candidates-local</url>
+      <releases>
+        <enabled>true</enabled>
+      </releases>
+      <snapshots>
+        <enabled>false</enabled>
+      </snapshots>
+    </repository>
+    <repository>
+      <id>libs-snapshots-local</id>
+      <name>Netflix Artifactory</name>
+      <url>http://artifacts.netflix.com/libs-snapshots-local</url>
+      <releases>
+        <enabled>true</enabled>
+      </releases>
+      <snapshots>
+        <enabled>false</enabled>
+      </snapshots>
+    </repository>
   </repositories>
   <pluginRepositories>
     <pluginRepository>
