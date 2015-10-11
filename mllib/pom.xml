@@ -125,6 +125,38 @@
       <groupId>org.apache.spark</groupId>
       <artifactId>spark-test-tags_${scala.binary.version}</artifactId>
     </dependency>
+    <!-- Needed for sparkling water -->
+    <dependency>
+      <groupId>ai.h2o</groupId>
+      <artifactId>sparkling-water-core_2.10</artifactId>
+      <version>1.5.2</version>
+    </dependency>
+    <dependency>
+      <groupId>ai.h2o</groupId>
+      <artifactId>h2o-core</artifactId>
+      <version>3.2.0.5</version>
+      <exclusions>
+        <exclusion>
+          <groupId>joda-time</groupId>
+          <artifactId>joda-time</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>ai.h2o</groupId>
+      <artifactId>h2o-scala_2.10</artifactId>
+      <version>3.2.0.5</version>
+    </dependency>
+    <dependency>
+      <groupId>ai.h2o</groupId>
+      <artifactId>h2o-algos</artifactId>
+      <version>3.2.0.5</version>
+    </dependency>
+    <dependency>
+      <groupId>ai.h2o</groupId>
+      <artifactId>h2o-genmodel</artifactId>
+      <version>3.2.0.5</version>
+    </dependency>
   </dependencies>
   <profiles>
     <profile>
