@@ -21,6 +21,10 @@ import java.io.ObjectOutputStream
 import java.text.NumberFormat
 import java.util.{Date, Map, HashMap}
 
+import com.netflix.dse.mds.data.DataField
+import com.netflix.utils.ConfigurationUtils
+
+import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.util.matching.Regex
 
@@ -127,6 +131,14 @@ private[hive] class SparkHiveWriterContainer(
     }
   }
 
+  private def getMetricClasses(): String = {
+    return conf.value.get("dse.storage.partition.metrics")
+  }
+
+  private def getFieldMetricClasses(): String = {
+    return conf.value.get("dse.storage.field.metrics")
+  }
+
   private def getOutputName: String = {
     val numberFormat = NumberFormat.getInstance()
     numberFormat.setMinimumIntegerDigits(5)
@@ -164,13 +176,21 @@ private[hive] class SparkHiveWriterContainer(
         s"/batchid=${getBatchId()}"
       }
 
+    val columnDataFields = schema.iterator
+      .map(x => new DataField(x.name, x.dataType.simpleString)).toList
+    val dynamicPartPathWithNoStartingSlash = dynamicPartPath.stripPrefix("/")
     // TODO: Add dummy partition metrics. DeltaOutputCommitter reads the metadata file and
     // determines which partitions in franklin should get updated. So even if we don't have
     // partition metrics yet, we add dummy one for now.
-    if (!partitionMetadata.containsKey(dynamicPartPath)) {
-      logInfo(s"Add ${dynamicPartPath} to partition metadata map")
-      partitionMetadata.put(dynamicPartPath, null)
+    if (!partitionMetadata.containsKey(dynamicPartPathWithNoStartingSlash)) {
+      logInfo(s"Add ${dynamicPartPathWithNoStartingSlash} to partition metadata map")
+      val pm: PartitionMetrics = new PartitionMetrics(
+        getMetricClasses(), getFieldMetricClasses(), new HivePartitionMetricHelper())
+      pm.setSchema(columnDataFields.asJava)
+      pm.initialize(ConfigurationUtils.newConfiguration(conf.value.iterator()))
+      partitionMetadata.put(dynamicPartPathWithNoStartingSlash, pm)
     }
+    partitionMetadata.get(dynamicPartPathWithNoStartingSlash).update(new HiveDataTuple(row))
 
     def newWriter(): FileSinkOperator.RecordWriter = {
       val newFileSinkDesc = new FileSinkDesc(
@@ -184,7 +204,7 @@ private[hive] class SparkHiveWriterContainer(
         val sh: StorageHelper = new StorageHelper(taskContext, getUniqueId(), getFinalLocation())
         val base: String = sh.getBaseTaskAttemptTempLocation
         assert(base != null, "Undefined job output-path")
-        val workPath = new Path(base, dynamicPartPath.stripPrefix("/"))
+        val workPath = new Path(base, dynamicPartPathWithNoStartingSlash)
         new Path(workPath, getOutputName)
       }
 

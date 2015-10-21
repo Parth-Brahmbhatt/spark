@@ -18,6 +18,10 @@
 package org.apache.spark.sql.hive
 
 import scala.collection.JavaConverters._
+
+import com.netflix.dse.mds.data.{DataField, DataTuple}
+import com.netflix.dse.mds.metric.PartitionMetricHelper
+
 import scala.collection.mutable
 
 import com.google.common.base.Objects
@@ -714,6 +718,22 @@ private[hive] case class InsertIntoHiveTable(
   override lazy val resolved: Boolean = childrenResolved && child.output.zip(tableOutput).forall {
     case (childAttr, tableAttr) => childAttr.dataType.sameType(tableAttr.dataType)
   }
+}
+
+private[hive] class HiveDataTuple(row : InternalRow) extends DataTuple{
+  override def size(): Int = row.numFields
+
+  override def toDelimitedString(p1: String): String = row.toString
+
+  override def get(p1: Int): AnyRef = row.get(p1, null)
+
+  override def isNull(p1: Int): Boolean = row.isNullAt(p1)
+}
+
+private[hive] class HivePartitionMetricHelper extends PartitionMetricHelper{
+  override def newTuple(p1: scala.Any): DataTuple =
+      new HiveDataTuple(new GenericInternalRow(Array(p1)))
+  override def isStringType(p1: DataField): Boolean = "string".equals(p1.getType)
 }
 
 private[hive] case class MetastoreRelation
