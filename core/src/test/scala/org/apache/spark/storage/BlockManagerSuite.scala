@@ -1302,4 +1302,44 @@ class BlockManagerSuite extends SparkFunSuite with Matchers with BeforeAndAfterE
     assert(result.data === Right(bytes))
     assert(result.droppedBlocks === Nil)
   }
+
+  test("SPARK-13328: refresh block locations from the driver if max fetch failures are reached") {
+    import scala.concurrent._
+    import ExecutionContext.Implicits.global
+
+    conf.set("spark.shuffle.io.maxRetries", "1")
+    conf.set("spark.shuffle.io.retryWait", "1s")
+    conf.set("spark.block.failures.beforeLocationRefresh", "1")
+    conf.set("spark.dynamicAllocation.enabled", "true")
+
+    store = makeBlockManager(8000, "executor1")
+    store2 = makeBlockManager(8000, "executor2")
+    store3 = makeBlockManager(8000, "executor3")
+
+    val item = 999L
+    store2.putSingle("item", item, StorageLevel.MEMORY_ONLY, tellMaster = true)
+    store3.putSingle("item", item, StorageLevel.MEMORY_ONLY, tellMaster = true)
+
+    assert(store.getRemoteBytes("item").isDefined, "block should be fetched properly")
+
+    store2.stop()
+    store2 = null
+
+    store3.stop()
+    store3 = null
+
+    val f = Future {
+      assert(store.getRemoteBytes("item").isDefined, "block should be fetched properly")
+    }
+
+    Thread.sleep(3000)
+
+    // add a new executor and remove the other ones
+    val store4 = makeBlockManager(8000, "executor4")
+    store4.putSingle("item", item, StorageLevel.MEMORY_ONLY, tellMaster = true)
+    master.removeExecutor("executor2")
+    master.removeExecutor("executor3")
+
+    Await.result(f, 10 seconds)
+  }
 }

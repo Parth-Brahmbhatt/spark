@@ -138,6 +138,11 @@ private[spark] class BlockManager(
   // Whether to compress shuffle output temporarily spilled to disk
   private val compressShuffleSpill = conf.getBoolean("spark.shuffle.spill.compress", true)
 
+  // Max number of failures before this block manager refreshes the block locations from the driver
+  private val maxFailuresBeforeLocationRefresh =
+    conf.getInt("spark.block.failures.beforeLocationRefresh", Int.MaxValue)
+  private val dynamicAllocationEnabled = Utils.isDynamicAllocationEnabled(conf)
+
   private val slaveEndpoint = rpcEnv.setupEndpoint(
     "BlockManagerEndpoint" + BlockManager.ID_GENERATOR.next,
     new BlockManagerSlaveEndpoint(rpcEnv, this, mapOutputTracker))
@@ -582,7 +587,9 @@ private[spark] class BlockManager(
     require(blockId != null, "BlockId is null")
     val locations = Random.shuffle(master.getLocations(blockId))
     var numFetchFailures = 0
-    for (loc <- locations) {
+    var locationIterator = locations.iterator
+    while (locationIterator.hasNext) {
+      val loc = locationIterator.next()
       logDebug(s"Getting remote block $blockId from $loc")
       val data = try {
         blockTransferService.fetchBlockSync(
@@ -598,6 +605,18 @@ private[spark] class BlockManager(
             // This location failed, so we retry fetch from a different one by returning null here
             logWarning(s"Failed to fetch remote block $blockId " +
               s"from $loc (failed attempt $numFetchFailures)", e)
+
+            // if dynamic alloc. is enabled and if there is a large number of executors
+            // then locations list can contain a large number of stale entries causing
+            // a large number of retries that may take a significant amount of time
+            // To get rid of these stale entries we refresh the block locations
+            // after a certain number of fetch failures
+            if (dynamicAllocationEnabled && numFetchFailures >= maxFailuresBeforeLocationRefresh) {
+              locationIterator = Random.shuffle(master.getLocations(blockId)).iterator
+              logDebug(s"Refreshed locations from the driver " +
+                s"after ${numFetchFailures} fetch failures.")
+              numFetchFailures = 0
+            }
             null
           }
       }
