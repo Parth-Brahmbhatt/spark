@@ -35,6 +35,11 @@
   <url>http://spark.apache.org/</url>
   <dependencies>
     <dependency>
+      <groupId>netflix</groupId>
+      <artifactId>bdp-fs</artifactId>
+      <version>0.1.0</version>
+    </dependency>
+    <dependency>
       <groupId>org.apache.avro</groupId>
       <artifactId>avro-mapred</artifactId>
       <classifier>${avro.mapred.classifier}</classifier>
