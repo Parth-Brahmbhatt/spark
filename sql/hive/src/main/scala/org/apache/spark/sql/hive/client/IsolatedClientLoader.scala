@@ -22,6 +22,8 @@ import java.lang.reflect.InvocationTargetException
 import java.net.{URL, URLClassLoader}
 import java.util
 
+import org.apache.hadoop.conf.Configuration
+
 import scala.language.reflectiveCalls
 import scala.util.Try
 
@@ -41,6 +43,7 @@ private[hive] object IsolatedClientLoader extends Logging {
   def forVersion(
       hiveMetastoreVersion: String,
       hadoopVersion: String,
+      hadoopConf: Configuration,
       config: Map[String, String] = Map.empty,
       ivyPath: Option[String] = None,
       sharedPrefixes: Seq[String] = Seq.empty,
@@ -77,6 +80,7 @@ private[hive] object IsolatedClientLoader extends Logging {
     new IsolatedClientLoader(
       version = hiveVersion(hiveMetastoreVersion),
       execJars = files,
+      hadoopConf = hadoopConf,
       config = config,
       sharesHadoopClasses = sharesHadoopClasses,
       sharedPrefixes = sharedPrefixes,
@@ -147,6 +151,7 @@ private[hive] object IsolatedClientLoader extends Logging {
 private[hive] class IsolatedClientLoader(
     val version: HiveVersion,
     val execJars: Seq[URL] = Seq.empty,
+    val hadoopConf: Configuration = null,
     val config: Map[String, String] = Map.empty,
     val isolationOn: Boolean = true,
     val sharesHadoopClasses: Boolean = true,
@@ -235,7 +240,7 @@ private[hive] class IsolatedClientLoader(
   /** The isolated client interface to Hive. */
   private[hive] def createClient(): ClientInterface = {
     if (!isolationOn) {
-      return new ClientWrapper(version, config, baseClassLoader, this)
+      return new ClientWrapper(version, hadoopConf, config, baseClassLoader, this)
     }
     // Pre-reflective instantiation setup.
     logDebug("Initializing the logger to avoid disaster...")
@@ -246,7 +251,7 @@ private[hive] class IsolatedClientLoader(
       classLoader
         .loadClass(classOf[ClientWrapper].getName)
         .getConstructors.head
-        .newInstance(version, config, classLoader, this)
+        .newInstance(version, hadoopConf, config, classLoader, this)
         .asInstanceOf[ClientInterface]
     } catch {
       case e: InvocationTargetException =>

@@ -20,6 +20,8 @@ package org.apache.spark.sql.hive.client
 import java.io.{File, PrintStream}
 import java.util.{Map => JMap}
 
+import org.apache.hadoop.conf.Configuration
+
 import scala.collection.JavaConverters._
 import scala.language.reflectiveCalls
 
@@ -60,6 +62,7 @@ import org.apache.spark.util.{CircularBuffer, Utils}
  */
 private[hive] class ClientWrapper(
     override val version: HiveVersion,
+    hadoopConf: Configuration,
     config: Map[String, String],
     initClassLoader: ClassLoader,
     val clientLoader: IsolatedClientLoader)
@@ -182,7 +185,7 @@ private[hive] class ClientWrapper(
         // so we should keep `conf` and reuse the existing instance of `CliSessionState`.
         originalState
       } else {
-        val initialConf = new HiveConf(classOf[SessionState])
+        val initialConf = new HiveConf(hadoopConf, classOf[SessionState])
         // HiveConf is a Hadoop Configuration, which has a field of classLoader and
         // the initial value will be the current thread's context class loader
         // (i.e. initClassLoader at here).

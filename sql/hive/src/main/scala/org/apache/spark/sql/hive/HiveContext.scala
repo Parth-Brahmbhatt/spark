@@ -212,6 +212,7 @@ class HiveContext private[hive](
     val loader = new IsolatedClientLoader(
       version = IsolatedClientLoader.hiveVersion(hiveExecutionVersion),
       execJars = Seq(),
+      hadoopConf = sc.hadoopConfiguration,
       config = newTemporaryConfiguration(),
       isolationOn = false,
       baseClassLoader = Utils.getContextOrSparkClassLoader)
@@ -241,7 +242,7 @@ class HiveContext private[hive](
 
     // We instantiate a HiveConf here to read in the hive-site.xml file and then pass the options
     // into the isolated client loader
-    val metadataConf = new HiveConf()
+    val metadataConf = new HiveConf(sc.hadoopConfiguration, classOf[HiveConf])
 
     val defaultWarehouseLocation = metadataConf.get("hive.metastore.warehouse.dir")
     logInfo("default warehouse location is " + defaultWarehouseLocation)
@@ -280,6 +281,7 @@ class HiveContext private[hive](
       new IsolatedClientLoader(
         version = metaVersion,
         execJars = jars.toSeq,
+        hadoopConf = sc.hadoopConfiguration,
         config = allConfig,
         isolationOn = true,
         barrierPrefixes = hiveMetastoreBarrierPrefixes,
@@ -291,6 +293,7 @@ class HiveContext private[hive](
       IsolatedClientLoader.forVersion(
         hiveMetastoreVersion = hiveMetastoreVersion,
         hadoopVersion = VersionInfo.getVersion,
+        hadoopConf = sc.hadoopConfiguration,
         config = allConfig,
         barrierPrefixes = hiveMetastoreBarrierPrefixes,
         sharedPrefixes = hiveMetastoreSharedPrefixes)
@@ -319,6 +322,7 @@ class HiveContext private[hive](
       new IsolatedClientLoader(
         version = metaVersion,
         execJars = jars.toSeq,
+        hadoopConf = sc.hadoopConfiguration,
         config = allConfig,
         isolationOn = true,
         barrierPrefixes = hiveMetastoreBarrierPrefixes,

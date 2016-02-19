@@ -19,6 +19,7 @@ package org.apache.spark.sql.hive.client
 
 import java.io.File
 
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.util.VersionInfo
 
 import org.apache.spark.sql.hive.HiveContext
@@ -58,10 +59,23 @@ class VersionsSuite extends SparkFunSuite with Logging {
     val badClient = IsolatedClientLoader.forVersion(
       hiveMetastoreVersion = HiveContext.hiveExecutionVersion,
       hadoopVersion = VersionInfo.getVersion,
+      hadoopConf = new Configuration(),
       config = buildConf(),
       ivyPath = ivyPath).createClient()
     val db = new HiveDatabase("default", "")
     badClient.createDatabase(db)
+  }
+
+  test("hadoop configuration preserved") {
+    val hadoopConf = new Configuration();
+    hadoopConf.set("test", "success")
+    val client = IsolatedClientLoader.forVersion(
+      hiveMetastoreVersion = HiveContext.hiveExecutionVersion,
+      hadoopVersion = VersionInfo.getVersion,
+      hadoopConf = hadoopConf,
+      config = buildConf(),
+      ivyPath = ivyPath).createClient()
+    assert("success" == client.getConf("test", null))
   }
 
   private def getNestedMessages(e: Throwable): String = {
@@ -92,6 +106,7 @@ class VersionsSuite extends SparkFunSuite with Logging {
         IsolatedClientLoader.forVersion(
           hiveMetastoreVersion = "13",
           hadoopVersion = VersionInfo.getVersion,
+          hadoopConf = new Configuration(),
           config = buildConf(),
           ivyPath = ivyPath).createClient()
       }
@@ -111,6 +126,7 @@ class VersionsSuite extends SparkFunSuite with Logging {
         IsolatedClientLoader.forVersion(
           hiveMetastoreVersion = version,
           hadoopVersion = VersionInfo.getVersion,
+          hadoopConf = new Configuration(),
           config = buildConf(),
           ivyPath = ivyPath).createClient()
     }
