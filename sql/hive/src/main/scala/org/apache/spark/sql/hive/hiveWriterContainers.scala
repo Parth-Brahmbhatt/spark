@@ -233,10 +233,10 @@ private[hive] class SparkHiveWriterContainer(
     // Better solution is to add a step similar to what Hive FileSinkOperator.jobCloseOp does:
     // calling something like Utilities.mvFileToFinalPath to cleanup the output directory and then
     // load it with loadDynamicPartitions/loadPartition/loadTable.
-    val oldMarker = jobConf.getBoolean(SUCCESSFUL_JOB_OUTPUT_DIR_MARKER, true)
-    jobConf.setBoolean(SUCCESSFUL_JOB_OUTPUT_DIR_MARKER, false)
+    val oldMarker = conf.value.getBoolean(SUCCESSFUL_JOB_OUTPUT_DIR_MARKER, true)
+    conf.value.setBoolean(SUCCESSFUL_JOB_OUTPUT_DIR_MARKER, false)
     committer.commitJob(jobContext)
-    jobConf.setBoolean(SUCCESSFUL_JOB_OUTPUT_DIR_MARKER, oldMarker)
+    conf.value.setBoolean(SUCCESSFUL_JOB_OUTPUT_DIR_MARKER, oldMarker)
   }
 
   private def initWriters() {
