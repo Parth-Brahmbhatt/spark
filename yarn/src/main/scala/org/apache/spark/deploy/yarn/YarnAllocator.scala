@@ -254,12 +254,11 @@ private[yarn] class YarnAllocator(
   def updateResourceRequests(): Unit = {
     val pendingAllocate = getPendingAllocate
     val numPendingAllocate = pendingAllocate.size
-    val newContainers = targetNumExecutors - numPendingAllocate - numExecutorsRunning
+    val missing = targetNumExecutors - numPendingAllocate - numExecutorsRunning
 
-    if (newContainers > 0) {
-      logInfo(s"Will request $newContainers executor containers, each with " +
-        s"${resource.getVirtualCores} cores and ${resource.getMemory} MB memory including " +
-        s"$memoryOverhead MB overhead")
+    if (missing > 0) {
+      logInfo(s"Will request $missing executor containers, each with ${resource.getVirtualCores} " +
+        s"cores and ${resource.getMemory} MB memory including $memoryOverhead MB overhead")
 
       // Split the pending container request into three groups: locality matched list, locality
       // unmatched list and non-locality list. Take the locality matched container request into
@@ -267,53 +266,54 @@ private[yarn] class YarnAllocator(
       // For locality unmatched and locality free container requests, cancel these container
       // requests, since required locality preference has been changed, recalculating using
       // container placement strategy.
-      val (localRequests, staleRequests, nonLocalRequests) = splitPendingAllocationsByLocality(
+      val (localRequests, staleRequests, anyHostRequests) = splitPendingAllocationsByLocality(
         hostToLocalTaskCounts, pendingAllocate)
 
       // cancel "stale" requests for locations that are no longer needed
       staleRequests.foreach { stale =>
         amClient.removeContainerRequest(stale)
-        logInfo(s"Canceled request for host ${hostStr(stale)} (locality no longer needed)")
       }
       val cancelledContainers = staleRequests.size
+      logInfo(s"Canceled $cancelledContainers container requests (locality no longer needed)")
 
       // consider the number of new containers and cancelled stale containers available
-      val availableContainers = newContainers + cancelledContainers
+      val availableContainers = missing + cancelledContainers
 
-      // to maximize locality, include non-local containers that can be cancelled and replaced
-      val potentialContainers = availableContainers + nonLocalRequests.size
+      // to maximize locality, include requests with no locality preference that can be cancelled
+      val potentialContainers = availableContainers + anyHostRequests.size
 
       val containerLocalityPreferences = containerPlacementStrategy.localityOfRequestedContainers(
         potentialContainers, numLocalityAwareTasks, hostToLocalTaskCounts,
           allocatedHostToContainersMap, localRequests)
 
-      val newRequests = new mutable.ArrayBuffer[ContainerRequest]
+      val newLocalityRequests = new mutable.ArrayBuffer[ContainerRequest]
       containerLocalityPreferences.foreach {
         case ContainerLocalityPreferences(nodes, racks) if nodes != null =>
-          newRequests.append(createContainerRequest(resource, nodes, racks))
+          newLocalityRequests.append(createContainerRequest(resource, nodes, racks))
         case _ =>
       }
 
-      if (availableContainers >= newRequests.size) {
-        // more containers are available than needed for locality, fill in some anywhere executors
-        for (i <- 0 until (availableContainers - newRequests.size)) {
-          newRequests.append(createContainerRequest(resource, null, null))
+      if (availableContainers >= newLocalityRequests.size) {
+        // more containers are available than needed for locality, fill in requests for any host
+        for (i <- 0 until (availableContainers - newLocalityRequests.size)) {
+          newLocalityRequests.append(createContainerRequest(resource, null, null))
         }
       } else {
-        // cancel some non-local containers to schedule more local containers
-        nonLocalRequests.slice(0, newRequests.size - availableContainers).foreach { nonLocal =>
+        val numToCancel = newLocalityRequests.size - availableContainers
+        // cancel some requests without locality preferences to schedule more local containers
+        anyHostRequests.slice(0, numToCancel).foreach { nonLocal =>
           amClient.removeContainerRequest(nonLocal)
-          logInfo(s"Canceled request for a non-local container to resubmit for a local container")
         }
+        logInfo(s"Canceled $numToCancel container requests for any host to resubmit with locality")
       }
 
-      newRequests.foreach { request =>
+      newLocalityRequests.foreach { request =>
         amClient.addContainerRequest(request)
         logInfo(s"Submitted container request (host: ${hostStr(request)}, capability: $resource)")
       }
 
-    } else if (newContainers < 0) {
-      val numToCancel = math.min(numPendingAllocate, -newContainers)
+    } else if (missing < 0) {
+      val numToCancel = math.min(numPendingAllocate, -missing)
       logInfo(s"Canceling requests for $numToCancel executor containers")
 
       val matchingRequests = amClient.getMatchingRequests(RM_REQUEST_PRIORITY, ANY_HOST, resource)
