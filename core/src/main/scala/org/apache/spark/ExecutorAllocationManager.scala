@@ -86,9 +86,8 @@ private[spark] class ExecutorAllocationManager(
   import ExecutorAllocationManager._
 
   // Lower and upper bounds on the number of executors.
-  private val minNumExecutors = conf.getInt("spark.dynamicAllocation.minExecutors", 0)
-  private val maxNumExecutors = conf.getInt("spark.dynamicAllocation.maxExecutors",
-    Integer.MAX_VALUE)
+  private val minNumExecutors = Utils.getDynamicAllocationMinExecutors(conf)
+  private val maxNumExecutors = Utils.getDynamicAllocationMaxExecutors(conf)
 
   // How long there must be backlogged tasks for before an addition is triggered (seconds)
   private val schedulerBacklogTimeoutS = conf.getTimeAsSeconds(
