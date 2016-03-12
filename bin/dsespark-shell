@@ -9,6 +9,12 @@ then
 fi
 
 export MASTER_NODE_ADDR=`sed -n 's/.*<name>yarn.resourcemanager.address<\/name><value>\(.*\):\(.*\)<\/value>.*/\1/p' $HADOOP_CONF_DIR/yarn-site.xml` 
+
+# Handle new line character in emr4 yarn-site.xml 
+if [ -z "$MASTER_NODE_ADDR" ]; then
+    export MASTER_NODE_ADDR=`perl -0ne 'print $1 if m#<name>yarn.resourcemanager.hostname</name>\s*<value>(.*?)</value>#;' $HADOOP_CONF_DIR/yarn-site.xml`
+fi
+
 export SPARK_DRIVER_CLASSPATH="$SPARK_CONF_DIR:$SPARK_HOME/lib/*:$($HADOOP_HOME/bin/hadoop classpath)"
 export SPARK_LOCAL_HOSTNAME=$EC2_HOSTNAME
 export MALLOC_ARENA_MAX=4
