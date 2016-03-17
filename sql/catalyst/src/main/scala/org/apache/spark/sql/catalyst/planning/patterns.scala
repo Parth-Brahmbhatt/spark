@@ -20,7 +20,7 @@ package org.apache.spark.sql.catalyst.planning
 import scala.annotation.tailrec
 import scala.collection.mutable
 
-import org.apache.spark.Logging
+import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans._
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -78,10 +78,13 @@ object PhysicalOperation extends PredicateHelper {
   private def substitute(aliases: Map[Attribute, Expression])(expr: Expression): Expression = {
     expr.transform {
       case a @ Alias(ref: AttributeReference, name) =>
-        aliases.get(ref).map(Alias(_, name)(a.exprId, a.qualifiers)).getOrElse(a)
+        aliases.get(ref)
+          .map(Alias(_, name)(a.exprId, a.qualifiers, isGenerated = a.isGenerated))
+          .getOrElse(a)
 
       case a: AttributeReference =>
-        aliases.get(a).map(Alias(_, a.name)(a.exprId, a.qualifiers)).getOrElse(a)
+        aliases.get(a)
+          .map(Alias(_, a.name)(a.exprId, a.qualifiers, isGenerated = a.isGenerated)).getOrElse(a)
     }
   }
 }

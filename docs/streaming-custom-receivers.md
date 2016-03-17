@@ -72,7 +72,8 @@ class CustomReceiver(host: String, port: Int)
      socket = new Socket(host, port)
 
      // Until stopped or connection broken continue reading
-     val reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), "UTF-8"))
+     val reader = new BufferedReader(
+       new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))
      userInput = reader.readLine()
      while(!isStopped && userInput != null) {
        store(userInput)
@@ -135,7 +136,8 @@ public class JavaCustomReceiver extends Receiver<String> {
       // connect to the server
       socket = new Socket(host, port);
 
-      BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+      BufferedReader reader = new BufferedReader(
+        new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
 
       // Until stopped or connection broken continue reading
       while (!isStopped() && (userInput = reader.readLine()) != null) {
@@ -254,57 +256,3 @@ The following table summarizes the characteristics of both types of receivers
   <td></td>
 </tr>
 </table>
-
-## Implementing and Using a Custom Actor-based Receiver
-
-<div class="codetabs">
-<div data-lang="scala"  markdown="1" >
-
-Custom [Akka Actors](http://doc.akka.io/docs/akka/2.3.11/scala/actors.html) can also be used to
-receive data. Extending [`ActorReceiver`](api/scala/index.html#org.apache.spark.streaming.akka.ActorReceiver)
-allows received data to be stored in Spark using `store(...)` methods. The supervisor strategy of
-this actor can be configured to handle failures, etc.
-
-{% highlight scala %}
-
-class CustomActor extends ActorReceiver {
-  def receive = {
-    case data: String => store(data)
-  }
-}
-
-// A new input stream can be created with this custom actor as
-val ssc: StreamingContext = ...
-val lines = AkkaUtils.createStream[String](ssc, Props[CustomActor](), "CustomReceiver")
-
-{% endhighlight %}
-
-See [ActorWordCount.scala](https://github.com/apache/spark/blob/master/examples/src/main/scala/org/apache/spark/examples/streaming/ActorWordCount.scala) for an end-to-end example.
-</div>
-<div data-lang="java" markdown="1">
-
-Custom [Akka UntypedActors](http://doc.akka.io/docs/akka/2.3.11/java/untyped-actors.html) can also be used to
-receive data. Extending [`JavaActorReceiver`](api/scala/index.html#org.apache.spark.streaming.akka.JavaActorReceiver)
-allows received data to be stored in Spark using `store(...)` methods. The supervisor strategy of
-this actor can be configured to handle failures, etc.
-
-{% highlight java %}
-
-class CustomActor extends JavaActorReceiver {
-  @Override
-  public void onReceive(Object msg) throws Exception {
-    store((String) msg);
-  }
-}
-
-// A new input stream can be created with this custom actor as
-JavaStreamingContext jssc = ...;
-JavaDStream<String> lines = AkkaUtils.<String>createStream(jssc, Props.create(CustomActor.class), "CustomReceiver");
-
-{% endhighlight %}
-
-See [JavaActorWordCount.scala](https://github.com/apache/spark/blob/master/examples/src/main/scala/org/apache/spark/examples/streaming/JavaActorWordCount.scala) for an end-to-end example.
-</div>
-</div>
-
-<span class="badge" style="background-color: grey">Python API</span> Since actors are available only in the Java and Scala libraries, AkkaUtils is not available in the Python API.
