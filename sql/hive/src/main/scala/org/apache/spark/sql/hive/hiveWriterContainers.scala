@@ -202,6 +202,10 @@ private[hive] class SparkHiveWriterContainer(
 
       val path = {
         val sh: StorageHelper = new StorageHelper(taskContext, getUniqueId(), getFinalLocation())
+        if(partColNames != null) {
+          val partColNamesSet: java.util.Set[String] = partColNames.toSet.asJava
+          sh.setPartitionKeys(partColNamesSet)
+        }
         val base: String = sh.getBaseTaskAttemptTempLocation
         assert(base != null, "Undefined job output-path")
         val workPath = new Path(base, dynamicPartPathWithNoStartingSlash)
@@ -249,6 +253,10 @@ private[hive] class SparkHiveWriterContainer(
     // In DseStorage, metadata is written by PartitionedRecordWriter. But since in Spark.
     // we don't use it, we instead write metadata in commit task.
     val sh: StorageHelper = new StorageHelper(taskContext, getUniqueId(), getFinalLocation())
+    if(partColNames != null) {
+      val partColNamesSet: java.util.Set[String] = partColNames.toSet.asJava
+      sh.setPartitionKeys(partColNamesSet)
+    }
     val base: String = sh.getBaseTaskAttemptTempLocation
     val file: Path = new Path(base, "_metadata")
     val fs: FileSystem = file.getFileSystem(conf.value)

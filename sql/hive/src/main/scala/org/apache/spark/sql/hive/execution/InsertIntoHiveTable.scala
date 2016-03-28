@@ -34,12 +34,15 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.execution.{UnaryNode, SparkPlan}
 import org.apache.spark.sql.hive.HiveShim.{ShimFileSinkDesc => FileSinkDesc}
 import org.apache.spark.sql.hive._
-import org.apache.spark.sql.types.DataType
 import org.apache.spark.{SparkException, TaskContext}
 import org.apache.spark.util.SerializableJobConf
+import org.apache.spark.sql.types._
+import org.apache.spark.unsafe.types.CalendarInterval
+import org.apache.spark.unsafe.types.UTF8String
 
 private[hive]
 case class InsertIntoHiveTable(
@@ -56,6 +59,40 @@ case class InsertIntoHiveTable(
     val serializer = tableDesc.getDeserializerClass.newInstance().asInstanceOf[Serializer]
     serializer.initialize(null, tableDesc.getProperties)
     serializer
+  }
+
+  private def deSerializeValue(value: String, dataType: DataType): Object = {
+    if(value == null) return null
+    dataType match {
+      case _: NullType =>
+        null
+      case _: BooleanType =>
+        java.lang.Boolean.valueOf(value)
+      case _: ByteType =>
+        java.lang.Byte.valueOf(value)
+      case _: ShortType =>
+        java.lang.Short.valueOf(value)
+      case _: IntegerType =>
+        java.lang.Integer.valueOf(value)
+      case _: LongType | TimestampType =>
+        java.lang.Long.valueOf(value)
+      case _: FloatType =>
+        java.lang.Float.valueOf(value)
+      case _: DoubleType =>
+        java.lang.Double.valueOf(value)
+      case _: DecimalType =>
+        java.lang.Double.valueOf(value)
+      case _: DateType =>
+        DateTimeUtils.stringToTime(value)
+      case _: BinaryType =>
+        value.getBytes
+      case _: StringType =>
+        UTF8String.fromString(value)
+      case _: CalendarIntervalType =>
+        CalendarInterval.fromString(value)
+      case _ =>
+        throw new UnsupportedOperationException("Unsupported data type " + dataType.simpleString)
+    }
   }
 
   def output: Seq[Attribute] = Seq.empty
@@ -94,6 +131,10 @@ case class InsertIntoHiveTable(
       val fieldOIs = standardOI.getAllStructFieldRefs.asScala
         .map(_.getFieldObjectInspector).toArray
       val dataTypes: Array[DataType] = child.output.map(_.dataType).toArray
+      val fieldNames: Array[String] = child.output.map(_.name).toArray
+      val tableProperties = fileSinkConf.getTableInfo.getProperties
+      val storeDefaults = conf.value.getBoolean("dse.store.default", false)
+      val fieldDefaultValues: Array[Object] = fieldNames.zip(dataTypes).map{ case (s, dt) => deSerializeValue(tableProperties.getProperty(s"dse.field.default.$s"), dt)}
       val wrappers = fieldOIs.zip(dataTypes).map { case (f, dt) => wrapperFor(f, dt)}
       val outputData = new Array[Any](fieldOIs.length)
 
@@ -102,7 +143,10 @@ case class InsertIntoHiveTable(
       iterator.foreach { row =>
         var i = 0
         while (i < fieldOIs.length) {
-          outputData(i) = if (row.isNullAt(i)) null else wrappers(i)(row.get(i, dataTypes(i)))
+          outputData(i) = if (row.isNullAt(i))
+                              if (storeDefaults) fieldDefaultValues(i) else null
+                          else
+                              wrappers(i)(row.get(i, dataTypes(i)))
           i += 1
         }
 

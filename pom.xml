@@ -355,6 +355,28 @@
         <enabled>false</enabled>
       </snapshots>
     </repository>
+    <repository>
+      <id>libs-candidates-local-pom</id>
+      <name>Netflix Artifactory</name>
+      <url>http://artifacts.netflix.com/libs-candidates-local-pom</url>
+      <releases>
+          <enabled>true</enabled>
+      </releases>
+      <snapshots>
+          <enabled>false</enabled>
+      </snapshots>
+    </repository>
+    <repository>
+      <id>libs-snapshots-local-pom</id>
+      <name>Netflix Artifactory</name>
+      <url>http://artifacts.netflix.com/libs-snapshots-local-pom</url>
+      <releases>
+          <enabled>true</enabled>
+      </releases>
+      <snapshots>
+          <enabled>false</enabled>
+      </snapshots>
+    </repository>
   </repositories>
   <pluginRepositories>
     <pluginRepository>

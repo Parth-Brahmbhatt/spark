@@ -21,6 +21,9 @@ import scala.collection.JavaConverters._
 
 import com.netflix.dse.mds.data.{DataField, DataTuple}
 import com.netflix.dse.mds.metric.PartitionMetricHelper
+import com.netflix.metacat.client.Client
+import com.netflix.metacat.common.api.MetacatV1
+import com.netflix.metacat.common.dto.TableDto
 
 import scala.collection.mutable
 
@@ -731,9 +734,12 @@ private[hive] class HiveDataTuple(row : InternalRow) extends DataTuple{
 }
 
 private[hive] class HivePartitionMetricHelper extends PartitionMetricHelper{
-  override def newTuple(p1: scala.Any): DataTuple =
-      new HiveDataTuple(new GenericInternalRow(Array(p1)))
-  override def isStringType(p1: DataField): Boolean = "string".equals(p1.getType)
+  override def newTuple(tuple: scala.Any): DataTuple = new HiveDataTuple(new GenericInternalRow(Array(tuple)))
+  override def isStringType(field: DataField): Boolean = DataTypes.StringType.simpleString.equals(field.getType)
+  override def isNumeric(field: DataField): Boolean =
+    ( DataTypes.IntegerType.simpleString.equals(field.getType) || DataTypes.LongType.simpleString.equals(field.getType)
+      || DataTypes.DoubleType.simpleString.equals(field.getType)|| DataTypes.FloatType.simpleString.equals(field.getType)
+      || DataTypes.ShortType.simpleString.equals(field.getType))
 }
 
 private[hive] case class MetastoreRelation
@@ -741,6 +747,18 @@ private[hive] case class MetastoreRelation
     (val table: HiveTable)
     (@transient private val sqlContext: SQLContext)
   extends LeafNode with MultiInstanceRelation with FileRelation {
+
+
+  /** Metacat API */
+  @transient private val metacatApi: MetacatV1 = {
+    // Metacat host
+    val metacatHost = sqlContext.conf.getConfString("netflix.metacat.host", "http://metacat.dynprod.netflix.net:7001")
+    // Client name
+    val metacatClientName = sqlContext.conf.getConfString("netflix.metacat.client.name", "spark-metacat-client")
+    // User
+    val metacatUserName = sqlContext.conf.getConfString("netflix.metacat.user.name", "spark-user")
+    Client.builder().withClientAppName(metacatClientName).withHost(metacatHost).withUserName(metacatUserName).build().getApi
+  }
 
   override def equals(other: Any): Boolean = other match {
     case relation: MetastoreRelation =>
@@ -757,6 +775,32 @@ private[hive] case class MetastoreRelation
 
   override protected def otherCopyArgs: Seq[AnyRef] = table :: sqlContext :: Nil
 
+
+  private def extendedProperties(databaseName : String, tableName: String): Map[String, String] = {
+    var properties: Map[String,String] = Map()
+    val hiveEnv: String = sqlContext.conf.getConfString("spark.sql.hive.env", "prod")
+    val storeDefaults: Boolean = sqlContext.getConf("dse.store.default", "false").toBoolean
+    if( storeDefaults) {
+      val catalogName: String = s"${hiveEnv}hive"
+      val tableMetadata: TableDto = metacatApi.getTable(catalogName, databaseName, tableName, Boolean.box(false), Boolean.box(true), Boolean.box(false))
+      val tableDefinitionMetadata = tableMetadata.getDefinitionMetadata
+      if (tableDefinitionMetadata != null
+        && tableDefinitionMetadata.get("extendedSchema") != null
+        && tableDefinitionMetadata.get("extendedSchema").get("fields") != null) {
+        val fields = tableDefinitionMetadata.get("extendedSchema").get("fields").elements()
+        while (fields.hasNext) {
+          val field = fields.next
+          if (field.has("name") && field.has("default")) {
+            val name = field.get("name").textValue
+            val defaultValue = field.get("default").textValue
+            properties += (s"dse.field.default.$name" -> defaultValue)
+          }
+        }
+      }
+    }
+    properties
+  }
+
   @transient val hiveQlTable: Table = {
     // We start by constructing an API table as Hive performs several important transformations
     // internally when converting an API table to a QL table.
@@ -767,6 +811,7 @@ private[hive] case class MetastoreRelation
     val tableParameters = new java.util.HashMap[String, String]()
     tTable.setParameters(tableParameters)
     table.properties.foreach { case (k, v) => tableParameters.put(k, v) }
+    extendedProperties(table.database, table.name).foreach{ case (k, v) => tableParameters.put(k, v) }
 
     tTable.setTableType(table.tableType.name)
 
