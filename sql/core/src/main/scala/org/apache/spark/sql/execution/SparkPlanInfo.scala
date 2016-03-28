@@ -20,6 +20,7 @@ package org.apache.spark.sql.execution
 import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.sql.execution.metric.SQLMetricInfo
 import org.apache.spark.util.Utils
+import scala.collection.Map
 
 /**
  * :: DeveloperApi ::
@@ -29,6 +30,7 @@ import org.apache.spark.util.Utils
 class SparkPlanInfo(
     val nodeName: String,
     val simpleString: String,
+    val details: Map[String, Any],
     val children: Seq[SparkPlanInfo],
     val metrics: Seq[SQLMetricInfo])
 
@@ -41,6 +43,6 @@ private[sql] object SparkPlanInfo {
     }
     val children = plan.children.map(fromSparkPlan)
 
-    new SparkPlanInfo(plan.nodeName, plan.simpleString, children, metrics)
+    new SparkPlanInfo(plan.nodeName, plan.simpleString, plan.argsMap, children, metrics)
   }
 }

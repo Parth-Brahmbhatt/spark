@@ -60,21 +60,8 @@ private[sql] object SQLExecution {
       }
       r
     } else {
-      // Don't support nested `withNewExecutionId`. This is an example of the nested
-      // `withNewExecutionId`:
-      //
-      // class DataFrame {
-      //   def foo: T = withNewExecutionId { something.createNewDataFrame().collect() }
-      // }
-      //
-      // Note: `collect` will call withNewExecutionId
-      // In this case, only the "executedPlan" for "collect" will be executed. The "executedPlan"
-      // for the outer DataFrame won't be executed. So it's meaningless to create a new Execution
-      // for the outer DataFrame. Even if we track it, since its "executedPlan" doesn't run,
-      // all accumulator metrics will be 0. It will confuse people if we show them in Web UI.
-      //
-      // A real case is the `DataFrame.count` method.
-      throw new IllegalArgumentException(s"$EXECUTION_ID_KEY is already set")
+      // Instead of throwing an exception, we execute the body that will be tracked within the previous tracking wrapper
+      body
     }
   }
 

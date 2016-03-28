@@ -52,7 +52,7 @@ class QueryExecution(val sqlContext: SQLContext, val logical: LogicalPlan) {
   lazy val executedPlan: SparkPlan = sqlContext.prepareForExecution.execute(sparkPlan)
 
   /** Internal version of the RDD. Avoids copies and has no schema */
-  lazy val toRdd: RDD[InternalRow] = executedPlan.execute()
+  lazy val toRdd: RDD[InternalRow] = SQLExecution.withNewExecutionId(sqlContext, this)(executedPlan.execute())
 
   protected def stringOrError[A](f: => A): String =
     try f.toString catch { case e: Throwable => e.toString }

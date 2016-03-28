@@ -411,6 +411,22 @@ abstract class TreeNode[BaseType <: TreeNode[BaseType]] extends Product {
   /** Returns a string representation of the nodes in this tree */
   def treeString: String = generateTreeString(0, Nil, new StringBuilder).toString
 
+  def argsMap: Map[String, Any] = productIterator.zipWithIndex.map {
+    case(tn, i) => argNames(i) -> argAny(tn)
+  }.toMap
+
+  lazy private val argNames: Seq[String] = getConstructorParameters(getClass).map(_._1)
+
+  private def argAny(x: Any): Any = x match {
+    case tn: TreeNode[_] if containsChild(tn) => null
+    case tn: TreeNode[_] if tn.toString contains "\n" => tn.argsMap
+    case seq: Seq[BaseType] if seq.toSet.subsetOf(children.toSet) => null
+    case seq: Seq[_] => seq.map(_.toString).toList
+    case set: Set[_] => set.map(_.toString).toList
+    case ref if ref.isInstanceOf[AnyRef] => ref.toString
+    case other => other
+  }
+
   /**
    * Returns a string representation of the nodes in this tree, where each operator is numbered.
    * The numbers can be used with [[trees.TreeNode.apply apply]] to easily access specific subtrees.
