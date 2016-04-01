@@ -38,7 +38,7 @@ import org.apache.hadoop.hive.ql.metadata._
 import org.apache.hadoop.hive.ql.plan.TableDesc
 
 import org.apache.spark.Logging
-import org.apache.spark.sql.catalyst.analysis.{Catalog, MultiInstanceRelation, OverrideCatalog}
+import org.apache.spark.sql.catalyst.analysis.{Catalog, MultiInstanceRelation, OverrideCatalog, PartitionedRelation}
 import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical
@@ -733,12 +733,16 @@ private[hive] class HiveDataTuple(row : InternalRow) extends DataTuple{
   override def isNull(p1: Int): Boolean = row.isNullAt(p1)
 }
 
-private[hive] class HivePartitionMetricHelper extends PartitionMetricHelper{
-  override def newTuple(tuple: scala.Any): DataTuple = new HiveDataTuple(new GenericInternalRow(Array(tuple)))
-  override def isStringType(field: DataField): Boolean = DataTypes.StringType.simpleString.equals(field.getType)
+private[hive] class HivePartitionMetricHelper extends PartitionMetricHelper {
+  override def newTuple(tuple: scala.Any): DataTuple =
+    new HiveDataTuple(new GenericInternalRow(Array(tuple)))
+  override def isStringType(field: DataField): Boolean =
+    DataTypes.StringType.simpleString.equals(field.getType)
   override def isNumeric(field: DataField): Boolean =
-    ( DataTypes.IntegerType.simpleString.equals(field.getType) || DataTypes.LongType.simpleString.equals(field.getType)
-      || DataTypes.DoubleType.simpleString.equals(field.getType)|| DataTypes.FloatType.simpleString.equals(field.getType)
+    ( DataTypes.IntegerType.simpleString.equals(field.getType)
+      || DataTypes.LongType.simpleString.equals(field.getType)
+      || DataTypes.DoubleType.simpleString.equals(field.getType)
+      || DataTypes.FloatType.simpleString.equals(field.getType)
       || DataTypes.ShortType.simpleString.equals(field.getType))
 }
 
@@ -746,18 +750,22 @@ private[hive] case class MetastoreRelation
     (databaseName: String, tableName: String, alias: Option[String])
     (val table: HiveTable)
     (@transient private val sqlContext: SQLContext)
-  extends LeafNode with MultiInstanceRelation with FileRelation {
+  extends LeafNode with MultiInstanceRelation with FileRelation with PartitionedRelation {
 
 
   /** Metacat API */
   @transient private val metacatApi: MetacatV1 = {
     // Metacat host
-    val metacatHost = sqlContext.conf.getConfString("netflix.metacat.host", "http://metacat.dynprod.netflix.net:7001")
+    val metacatHost = sqlContext.conf.getConfString(
+      "netflix.metacat.host", "http://metacat.dynprod.netflix.net:7001")
     // Client name
-    val metacatClientName = sqlContext.conf.getConfString("netflix.metacat.client.name", "spark-metacat-client")
+    val metacatClientName = sqlContext.conf.getConfString(
+      "netflix.metacat.client.name", "spark-metacat-client")
     // User
-    val metacatUserName = sqlContext.conf.getConfString("netflix.metacat.user.name", "spark-user")
-    Client.builder().withClientAppName(metacatClientName).withHost(metacatHost).withUserName(metacatUserName).build().getApi
+    val metacatUserName = sqlContext.conf.getConfString(
+      "netflix.metacat.user.name", "spark-user")
+    Client.builder().withClientAppName(metacatClientName).withHost(metacatHost)
+        .withUserName(metacatUserName).build().getApi
   }
 
   override def equals(other: Any): Boolean = other match {
@@ -777,12 +785,13 @@ private[hive] case class MetastoreRelation
 
 
   private def extendedProperties(databaseName : String, tableName: String): Map[String, String] = {
-    var properties: Map[String,String] = Map()
+    var properties: Map[String, String] = Map()
     val hiveEnv: String = sqlContext.conf.getConfString("spark.sql.hive.env", "prod")
     val storeDefaults: Boolean = sqlContext.getConf("dse.store.default", "false").toBoolean
     if( storeDefaults) {
       val catalogName: String = s"${hiveEnv}hive"
-      val tableMetadata: TableDto = metacatApi.getTable(catalogName, databaseName, tableName, Boolean.box(false), Boolean.box(true), Boolean.box(false))
+      val tableMetadata: TableDto = metacatApi.getTable(catalogName, databaseName, tableName,
+        Boolean.box(false), Boolean.box(true), Boolean.box(false))
       val tableDefinitionMetadata = tableMetadata.getDefinitionMetadata
       if (tableDefinitionMetadata != null
         && tableDefinitionMetadata.get("extendedSchema") != null
@@ -811,7 +820,9 @@ private[hive] case class MetastoreRelation
     val tableParameters = new java.util.HashMap[String, String]()
     tTable.setParameters(tableParameters)
     table.properties.foreach { case (k, v) => tableParameters.put(k, v) }
-    extendedProperties(table.database, table.name).foreach{ case (k, v) => tableParameters.put(k, v) }
+    extendedProperties(table.database, table.name).foreach {
+      case (k, v) => tableParameters.put(k, v)
+    }
 
     tTable.setTableType(table.tableType.name)
 
@@ -925,6 +936,8 @@ private[hive] case class MetastoreRelation
 
   /** PartitionKey attributes */
   val partitionKeys = table.partitionColumns.map(_.toAttribute)
+
+  override def partitionColumns: Seq[Attribute] = partitionKeys
 
   /** Non-partitionKey attributes */
   val attributes = table.schema.map(_.toAttribute)
