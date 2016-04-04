@@ -18,6 +18,7 @@
 package org.apache.spark.sql.hive.client
 
 import java.io.{File, PrintStream}
+import java.net.{MalformedURLException, URL}
 import java.util.{Map => JMap}
 
 import org.apache.hadoop.conf.Configuration
@@ -25,8 +26,8 @@ import org.apache.hadoop.conf.Configuration
 import scala.collection.JavaConverters._
 import scala.language.reflectiveCalls
 
-import org.apache.hadoop.fs.Path
 import org.apache.hadoop.hive.cli.CliSessionState
+import org.apache.hadoop.fs.{FsUrlStreamHandlerFactory, FileSystem, Path}
 import org.apache.hadoop.hive.conf.HiveConf
 import org.apache.hadoop.hive.metastore.api.{Database, FieldSchema}
 import org.apache.hadoop.hive.metastore.{TableType => HTableType}
@@ -60,6 +61,10 @@ import org.apache.spark.util.{CircularBuffer, Utils}
  * @param initClassLoader the classloader used when creating the `state` field of
  *                        this ClientWrapper.
  */
+
+// An object lock to ensure URL factory is registered exactly once.
+object URLFactoryRegistrationLock{}
+
 private[hive] class ClientWrapper(
     override val version: HiveVersion,
     hadoopConf: Configuration,
@@ -588,8 +593,28 @@ private[hive] class ClientWrapper(
       // `path` is a local file path without a URL scheme
       new File(path).toURI.toURL
     } else {
-      // `path` is a URL with a scheme
-      uri.toURL
+      try {
+        // `path` is a URL with a scheme
+        uri.toURL
+      } catch {
+        case e: MalformedURLException =>
+          Option(FileSystem.get(uri, hadoopConf)) match {
+          case Some(fs) =>
+            URLFactoryRegistrationLock.synchronized {
+              try {
+                // check one more time, in case another thread set the factory.
+                uri.toURL
+              } catch {
+                case e: MalformedURLException =>
+                  // Register the URLStreamHanlerFactory so hdfs urls work, should only happen once
+                  URL.setURLStreamHandlerFactory(new FsUrlStreamHandlerFactory(hadoopConf))
+                  uri.toURL
+              }
+            }
+          case None =>
+            throw e
+          }
+      }
     }
     clientLoader.addJar(jarURL)
     runSqlHive(s"ADD JAR $path")
