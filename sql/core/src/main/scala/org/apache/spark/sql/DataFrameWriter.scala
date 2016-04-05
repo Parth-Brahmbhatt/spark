@@ -186,7 +186,8 @@ final class DataFrameWriter private[sql](df: DataFrame) {
         partitions.getOrElse(Map.empty[String, Option[String]]),
         input,
         overwrite,
-        ifNotExists = false)).toRdd
+        ifNotExists = false,
+        isMatchByName = matchOutputColumnsByName)).toRdd
   }
 
   private def normalizedParCols: Option[Seq[String]] = partitioningColumns.map { parCols =>
@@ -197,6 +198,15 @@ final class DataFrameWriter private[sql](df: DataFrame) {
         .getOrElse(throw new AnalysisException(s"Partition column $col not found in existing " +
           s"columns (${df.logicalPlan.output.map(_.name).mkString(", ")})"))
     }
+  }
+
+  def byName: DataFrameWriter = {
+    extraOptions.put("matchByName", "true")
+    this
+  }
+
+  private def matchOutputColumnsByName: Boolean = {
+    extraOptions.getOrElse("matchByName", "false").toBoolean
   }
 
   /**

@@ -25,6 +25,7 @@ import org.scalatest.BeforeAndAfter
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{QueryTest, _}
 import org.apache.spark.sql.catalyst.plans.logical.InsertIntoTable
+import org.apache.spark.sql.execution.QueryExecutionException
 import org.apache.spark.sql.hive.test.TestHiveSingleton
 import org.apache.spark.sql.test.SQLTestUtils
 import org.apache.spark.sql.types._
@@ -217,6 +218,7 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
 
   test("Reject partitioning that does not match table") {
     withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
+      hiveContext.hiveconf.set("hive.exec.dynamic.partition.mode", "nonstrict")
       sql("CREATE TABLE partitioned (id bigint, data string) PARTITIONED BY (part string)")
       val data = (1 to 10).map(i => (i, s"data-$i", if ((i % 2) == 0) "even" else "odd"))
           .toDF("id", "data", "part")
@@ -229,6 +231,7 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
   }
 
   test("Test partition mode = strict") {
+    hiveContext.hiveconf.set("hive.exec.dynamic.partition.mode", "strict")
     sql("CREATE TABLE partitioned (id bigint, data string) PARTITIONED BY (part string)")
     val data = (1 to 10).map(i => (i, s"data-$i", if ((i % 2) == 0) "even" else "odd"))
         .toDF("id", "data", "part")
@@ -240,6 +243,7 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
 
   test("Detect table partitioning") {
     withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
+      hiveContext.hiveconf.set("hive.exec.dynamic.partition.mode", "nonstrict")
       sql("CREATE TABLE source (id bigint, data string, part string)")
       val data = (1 to 10).map(i => (i, s"data-$i", if ((i % 2) == 0) "even" else "odd")).toDF()
 
@@ -256,6 +260,7 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
 
   test("Detect table partitioning with correct partition order") {
     withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
+      hiveContext.hiveconf.set("hive.exec.dynamic.partition.mode", "nonstrict")
       sql("CREATE TABLE source (id bigint, part2 string, part1 string, data string)")
       val data = (1 to 10).map(i => (i, if ((i % 2) == 0) "even" else "odd", "p", s"data-$i"))
           .toDF("id", "part2", "part1", "data")
@@ -277,12 +282,139 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
 
   test("InsertIntoTable#resolved should include dynamic partitions") {
     withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
+      hiveContext.hiveconf.set("hive.exec.dynamic.partition.mode", "nonstrict")
       sql("CREATE TABLE partitioned (id bigint, data string) PARTITIONED BY (part string)")
       val data = (1 to 10).map(i => (i.toLong, s"data-$i")).toDF("id", "data")
 
       val logical = InsertIntoTable(sqlContext.table("partitioned").logicalPlan,
-        Map("part" -> None), data.logicalPlan, overwrite = false, ifNotExists = false)
+        Map("part" -> None), data.logicalPlan, overwrite = false, ifNotExists = false,
+        isMatchByName = false)
       assert(!logical.resolved, "Should not resolve: missing partition data")
+    }
+  }
+
+  test("Insert unnamed expressions by position") {
+    withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
+      hiveContext.hiveconf.set("hive.exec.dynamic.partition.mode", "nonstrict")
+      sql("CREATE TABLE source (id bigint, part string)")
+      sql("CREATE TABLE partitioned (id bigint, data string) PARTITIONED BY (part string)")
+
+      val expected = (1 to 10).map(i => (i, s"data-$i", if ((i % 2) == 0) "even" else "odd"))
+          .toDF("id", "data", "part")
+      val data = expected.select("id", "part")
+
+      data.write.insertInto("source")
+      checkAnswer(sql("SELECT * FROM source"), data.collect().toSeq)
+
+      // should be able to insert an expression when NOT mapping columns by name
+      sqlContext.table("source").selectExpr("id", "part", "CONCAT('data-', id)")
+          .write.insertInto("partitioned")
+      checkAnswer(sql("SELECT * FROM partitioned"), expected.collect().toSeq)
+    }
+  }
+
+  test("Insert expression by name") {
+    withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
+      hiveContext.hiveconf.set("hive.exec.dynamic.partition.mode", "nonstrict")
+      sql("CREATE TABLE source (id bigint, part string)")
+      sql("CREATE TABLE partitioned (id bigint, data string) PARTITIONED BY (part string)")
+
+      val expected = (1 to 10).map(i => (i, s"data-$i", if ((i % 2) == 0) "even" else "odd"))
+          .toDF("id", "data", "part")
+      val data = expected.select("id", "part")
+
+      data.write.insertInto("source")
+      checkAnswer(sql("SELECT * FROM source"), data.collect().toSeq)
+
+      intercept[AnalysisException] {
+        // also a problem when mapping by name
+        sqlContext.table("source").selectExpr("id", "part", "CONCAT('data-', id)")
+            .write.byName.insertInto("partitioned")
+      }
+
+      // should be able to insert an expression using AS when mapping columns by name
+      sqlContext.table("source").selectExpr("id", "part", "CONCAT('data-', id) as data")
+          .write.byName.insertInto("partitioned")
+      checkAnswer(sql("SELECT * FROM partitioned"), expected.collect().toSeq)
+    }
+  }
+
+  test("Reject missing columns") {
+    withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
+      hiveContext.hiveconf.set("hive.exec.dynamic.partition.mode", "nonstrict")
+      sql("CREATE TABLE source (id bigint, part string)")
+      sql("CREATE TABLE partitioned (id bigint, data string) PARTITIONED BY (part string)")
+
+      intercept[AnalysisException] {
+        sqlContext.table("source").write.insertInto("partitioned")
+      }
+
+      intercept[AnalysisException] {
+        // also a problem when mapping by name
+        sqlContext.table("source").write.byName.insertInto("partitioned")
+      }
+    }
+  }
+
+  test("Reject extra columns") {
+    withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
+      hiveContext.hiveconf.set("hive.exec.dynamic.partition.mode", "nonstrict")
+      sql("CREATE TABLE source (id bigint, data string, extra string, part string)")
+      sql("CREATE TABLE partitioned (id bigint, data string) PARTITIONED BY (part string)")
+
+      intercept[AnalysisException] {
+        sqlContext.table("source").write.insertInto("partitioned")
+      }
+
+      val data = (1 to 10)
+          .map(i => (i, s"data-$i", s"${i * i}", if ((i % 2) == 0) "even" else "odd"))
+          .toDF("id", "data", "extra", "part")
+      data.write.insertInto("source")
+      checkAnswer(sql("SELECT * FROM source"), data.collect().toSeq)
+
+      sqlContext.table("source").write.byName.insertInto("partitioned")
+
+      val expected = data.select("id", "data", "part")
+      checkAnswer(sql("SELECT * FROM partitioned"), expected.collect().toSeq)
+    }
+  }
+
+  test("Ignore names when writing by position") {
+    withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
+      hiveContext.hiveconf.set("hive.exec.dynamic.partition.mode", "nonstrict")
+      sql("CREATE TABLE source (id bigint, part string, data string)") // part, data transposed
+      sql("CREATE TABLE destination (id bigint, data string, part string)")
+
+      val data = (1 to 10).map(i => (i, s"data-$i", if ((i % 2) == 0) "even" else "odd"))
+          .toDF("id", "data", "part")
+
+      // write into the reordered table by name
+      data.write.byName.insertInto("source")
+      checkAnswer(sql("SELECT id, data, part FROM source"), data.collect().toSeq)
+
+      val expected = data.select($"id", $"part" as "data", $"data" as "part")
+
+      // this produces a warning, but writes src.part -> dest.data and src.data -> dest.part
+      sqlContext.table("source").write.insertInto("destination")
+      checkAnswer(sql("SELECT id, data, part FROM destination"), expected.collect().toSeq)
+    }
+  }
+
+  test("Reorder columns by name") {
+    withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
+      hiveContext.hiveconf.set("hive.exec.dynamic.partition.mode", "nonstrict")
+      sql("CREATE TABLE source (data string, part string, id bigint)")
+      sql("CREATE TABLE partitioned (id bigint, data string) PARTITIONED BY (part string)")
+
+      val data = (1 to 10).map(i => (s"data-$i", if ((i % 2) == 0) "even" else "odd", i))
+          .toDF("data", "part", "id")
+      data.write.insertInto("source")
+      checkAnswer(sql("SELECT * FROM source"), data.collect().toSeq)
+
+      sqlContext.table("source").write.byName.insertInto("partitioned")
+
+      val expected = data.select("id", "data", "part")
+      checkAnswer(sql("SELECT * FROM partitioned"), expected.collect().toSeq)
     }
   }
 }

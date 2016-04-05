@@ -528,20 +528,21 @@ private[hive] class HiveMetastoreCatalog(val client: ClientInterface, hive: Hive
 
       plan transformUp {
         // Write path
-        case InsertIntoTable(r: MetastoreRelation, partition, child, overwrite, ifNotExists)
+        case InsertIntoTable(r: MetastoreRelation, partition, child, overwrite, ifNotExists, byName)
           // Inserting into partitioned table is not supported in Parquet data source (yet).
           if !r.hiveQlTable.isPartitioned && hive.convertMetastoreParquet &&
             r.tableDesc.getSerdeClassName.toLowerCase.contains("parquet") =>
           val parquetRelation = convertToParquetRelation(r)
-          InsertIntoTable(parquetRelation, partition, child, overwrite, ifNotExists)
+          InsertIntoTable(parquetRelation, partition, child, overwrite, ifNotExists, byName)
 
         // Write path
-        case InsertIntoHiveTable(r: MetastoreRelation, partition, child, overwrite, ifNotExists)
+        case InsertIntoHiveTable(r: MetastoreRelation,
+            partition, child, overwrite, ifNotExists, byName)
           // Inserting into partitioned table is not supported in Parquet data source (yet).
           if !r.hiveQlTable.isPartitioned && hive.convertMetastoreParquet &&
             r.tableDesc.getSerdeClassName.toLowerCase.contains("parquet") =>
           val parquetRelation = convertToParquetRelation(r)
-          InsertIntoTable(parquetRelation, partition, child, overwrite, ifNotExists)
+          InsertIntoTable(parquetRelation, partition, child, overwrite, ifNotExists, byName)
 
         // Read path
         case relation: MetastoreRelation if hive.convertMetastoreParquet &&
@@ -636,48 +637,6 @@ private[hive] class HiveMetastoreCatalog(val client: ClientInterface, hive: Hive
   }
 
   /**
-   * Casts input data to correct data types according to table definition before inserting into
-   * that table.
-   */
-  object PreInsertionCasts extends Rule[LogicalPlan] {
-    def apply(plan: LogicalPlan): LogicalPlan = plan.transform {
-      // Wait until children are resolved.
-      case p: LogicalPlan if !p.childrenResolved => p
-
-      case p @ InsertIntoTable(table: MetastoreRelation, _, child, _, _) =>
-        castChildOutput(p, table, child)
-    }
-
-    def castChildOutput(p: InsertIntoTable, table: MetastoreRelation, child: LogicalPlan)
-      : LogicalPlan = {
-      val childOutputDataTypes = child.output.map(_.dataType)
-      val numDynamicPartitions = p.partition.values.count(_.isEmpty)
-      val tableOutputDataTypes =
-        (table.attributes ++ table.partitionKeys.takeRight(numDynamicPartitions))
-          .take(child.output.length).map(_.dataType)
-
-      if (childOutputDataTypes == tableOutputDataTypes) {
-        InsertIntoHiveTable(table, p.partition, p.child, p.overwrite, p.ifNotExists)
-      } else if (childOutputDataTypes.size == tableOutputDataTypes.size &&
-        childOutputDataTypes.zip(tableOutputDataTypes)
-          .forall { case (left, right) => left.sameType(right) }) {
-        // If both types ignoring nullability of ArrayType, MapType, StructType are the same,
-        // use InsertIntoHiveTable instead of InsertIntoTable.
-        InsertIntoHiveTable(table, p.partition, p.child, p.overwrite, p.ifNotExists)
-      } else {
-        // Only do the casting when child output data types differ from table output data types.
-        val castedChildOutput = child.output.zip(table.output).map {
-          case (input, output) if input.dataType != output.dataType =>
-            Alias(Cast(input, output.dataType), input.name)()
-          case (input, _) => input
-        }
-
-        p.copy(child = logical.Project(castedChildOutput, child))
-      }
-    }
-  }
-
-  /**
    * UNIMPLEMENTED: It needs to be decided how we will persist in-memory tables to the metastore.
    * For now, if this functionality is desired mix in the in-memory [[OverrideCatalog]].
    */
@@ -706,7 +665,8 @@ private[hive] case class InsertIntoHiveTable(
     partition: Map[String, Option[String]],
     child: LogicalPlan,
     overwrite: Boolean,
-    ifNotExists: Boolean)
+    ifNotExists: Boolean,
+    matchByName: Boolean)
   extends LogicalPlan {
 
   override def children: Seq[LogicalPlan] = child :: Nil

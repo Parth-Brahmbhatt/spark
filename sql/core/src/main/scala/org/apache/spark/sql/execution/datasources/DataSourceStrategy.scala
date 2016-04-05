@@ -135,11 +135,11 @@ private[sql] object DataSourceStrategy extends Strategy with Logging {
         l.output, toCatalystRDD(l, baseRelation.buildScan()), baseRelation) :: Nil
 
     case i @ logical.InsertIntoTable(l @ LogicalRelation(t: InsertableRelation, _),
-      part, query, overwrite, false) if part.isEmpty =>
+      part, query, overwrite, false, _) if part.isEmpty =>
       execution.ExecutedCommand(InsertIntoDataSource(l, query, overwrite)) :: Nil
 
     case i @ logical.InsertIntoTable(
-      l @ LogicalRelation(t: HadoopFsRelation, _), part, query, overwrite, false) =>
+      l @ LogicalRelation(t: HadoopFsRelation, _), part, query, overwrite, false, _) =>
       val mode = if (overwrite) SaveMode.Overwrite else SaveMode.Append
       execution.ExecutedCommand(InsertIntoHadoopFsRelation(t, query, mode)) :: Nil
 

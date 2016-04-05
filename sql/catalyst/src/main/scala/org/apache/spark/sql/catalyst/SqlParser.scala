@@ -147,7 +147,7 @@ object SqlParser extends AbstractSparkSQLParser with DataTypeParser {
 
   protected lazy val insert: Parser[LogicalPlan] =
     INSERT ~> (OVERWRITE ^^^ true | INTO ^^^ false) ~ (TABLE ~> relation) ~ select ^^ {
-      case o ~ r ~ s => InsertIntoTable(r, Map.empty[String, Option[String]], s, o, false)
+      case o ~ r ~ s => InsertIntoTable(r, Map.empty[String, Option[String]], s, o, false, false)
     }
 
   protected lazy val cte: Parser[LogicalPlan] =
