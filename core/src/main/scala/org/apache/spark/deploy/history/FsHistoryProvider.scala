@@ -106,8 +106,8 @@ private[history] class FsHistoryProvider(conf: SparkConf, clock: Clock)
    */
   private val replayExecutor: ExecutorService = {
     if (!conf.contains("spark.testing")) {
-      val numProcessors = Runtime.getRuntime.availableProcessors()
-      ThreadUtils.newDaemonFixedThreadPool(numProcessors, "log-replay-executor")
+      val numProcessors = Math.ceil(Runtime.getRuntime.availableProcessors() / 4f)
+      ThreadUtils.newDaemonFixedThreadPool(numProcessors.toInt, "log-replay-executor")
     } else {
       MoreExecutors.sameThreadExecutor()
     }
