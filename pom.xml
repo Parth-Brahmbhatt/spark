@@ -907,7 +907,6 @@
         <groupId>org.apache.curator</groupId>
         <artifactId>curator-recipes</artifactId>
         <version>${curator.version}</version>
-        <scope>${hadoop.deps.scope}</scope>
         <exclusions>
           <exclusion>
             <groupId>org.jboss.netty</groupId>
