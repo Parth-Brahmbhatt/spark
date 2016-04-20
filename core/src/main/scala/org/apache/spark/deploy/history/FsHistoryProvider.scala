@@ -79,7 +79,7 @@ private[history] class FsHistoryProvider(conf: SparkConf, clock: Clock)
 
   private val NOT_STARTED = "<Not Started>"
 
-  private val SPARK_HISTORY_FS_NUM_PROCESSING_THREADS = "spark.history.fs.num.processing.threads"
+  private val SPARK_HISTORY_FS_NUM_PROCESSING_THREADS = "spark.history.fs.numReplayThreads"
 
   // Interval between safemode checks.
   private val SAFEMODE_CHECK_INTERVAL_S = conf.getTimeAsSeconds(
