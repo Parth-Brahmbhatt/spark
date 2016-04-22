@@ -20,6 +20,7 @@ package org.apache.spark.sql.catalyst.expressions
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.TypeCheckResult
 import org.apache.spark.sql.catalyst.expressions.codegen.{GeneratedExpressionCode, CodeGenContext}
+import org.apache.spark.sql.catalyst.plans.physical.{ClusteredDistribution, Distribution}
 import org.apache.spark.sql.types._
 import org.apache.spark.util.collection.unsafe.sort.PrefixComparators.BinaryPrefixComparator
 import org.apache.spark.util.collection.unsafe.sort.PrefixComparators.DoublePrefixComparator
@@ -52,6 +53,21 @@ case class SortOrder(child: Expression, direction: SortDirection)
   override def toString: String = s"$child ${if (direction == Ascending) "ASC" else "DESC"}"
 
   def isAscending: Boolean = direction == Ascending
+}
+
+// TODO: should this be an implicit class somewhere?
+object SortOrder {
+  def satisfies(order: Seq[SortOrder], distribution: Distribution): Boolean = {
+    distribution match {
+      case c @ ClusteredDistribution(exprs) =>
+        // Zip discards extra order by expressions
+        (order.size >= exprs.size) && exprs.zip(order.map(_.child)).forall {
+          case (clusterExpr, orderExpr) => clusterExpr.semanticEquals(orderExpr)
+          case _ => false
+        }
+      case _ => false
+    }
+  }
 }
 
 /**
