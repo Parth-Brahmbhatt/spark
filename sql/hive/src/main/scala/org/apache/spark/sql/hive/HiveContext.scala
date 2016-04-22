@@ -43,10 +43,12 @@ import org.apache.spark.sql.SQLConf.SQLConfEntry._
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenFallback
-import org.apache.spark.sql.catalyst.expressions.{Expression, LeafExpression}
+import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, Expression, LeafExpression, SortOrder}
 import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
+import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.{InternalRow, ParserDialect, SqlParser}
-import org.apache.spark.sql.execution.datasources.{ResolveDataSource, DataSourceStrategy, PreWriteCheck}
+import org.apache.spark.sql.execution.datasources.{DataSourceStrategy, PreWriteCheck, ResolveDataSource}
 import org.apache.spark.sql.execution.ui.SQLListener
 import org.apache.spark.sql.execution.{CacheManager, ExecutedCommand, ExtractPythonUDFs, SetCommand}
 import org.apache.spark.sql.hive.client._
@@ -480,6 +482,7 @@ class HiveContext private[hive](
         catalog.CreateTables ::
         ExtractPythonUDFs ::
         ResolveHiveWindowFunction ::
+        RepartitionForColumnarFormats ::
         (if (conf.runSQLOnFile) new ResolveDataSource(self) :: Nil else Nil)
 
       override val extendedCheckRules = Seq(
@@ -803,3 +806,45 @@ private[hive] object HiveContext {
     case (other, tpe) if primitiveTypes contains tpe => other.toString
   }
 }
+
+
+object RepartitionForColumnarFormats extends Rule[LogicalPlan] {
+  override def apply(plan: LogicalPlan): LogicalPlan = plan transformUp {
+    // TODO: Add more cases that write to Columnar formats (e.g., CreateTableUsingAsSelect)
+
+    case insertInto @ InsertIntoHiveTable(rel: MetastoreRelation, partition, data, _, _, _)
+      if insertInto.resolved && isColumnar(rel) && !hasSortOrRepartition(data) =>
+      insertInto.copy(child = buildRepartitionAndSort(rel, data))
+
+    case insertInto @ InsertIntoTable(rel: MetastoreRelation, partition, data, _, _, _)
+      if insertInto.resolved && isColumnar(rel) && !hasSortOrRepartition(data) =>
+      insertInto.copy(child = buildRepartitionAndSort(rel, data))
+  }
+
+  private def isColumnar(rel: MetastoreRelation): Boolean = {
+    Option(rel.tableDesc.getSerdeClassName).map(_.toLowerCase).forall(
+      serde => serde.contains("parquet") || serde.contains("orc")
+    )
+  }
+
+  private def hasSortOrRepartition(plan: LogicalPlan): Boolean = {
+    plan.collectFirst {
+      case _: RepartitionByExpression => true
+      case _: Sort => true
+    }.getOrElse(false)
+  }
+
+  private def buildRepartitionAndSort(rel: MetastoreRelation, data: LogicalPlan): LogicalPlan = {
+    val exprs = inputExprs(rel.partitionColumns, data)
+    Sort(
+      exprs.map(expr => SortOrder(expr, Ascending)),
+      global = false,
+      RepartitionByExpression(exprs, data, None))
+  }
+
+  private def inputExprs(columns: Seq[Attribute], data: LogicalPlan) = {
+    columns.map(col => data.output.find(_.name == col.name).get)
+  }
+
+}
+
