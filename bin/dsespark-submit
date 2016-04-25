@@ -39,8 +39,13 @@ fi
 export SPARK_SUBMIT_OPTS="-Djava.io.tmpdir=$CURRENT_JOB_TMP_DIR -cp $SPARK_HOME/lib/*:$($HADOOP_HOME/bin/hadoop classpath)"
 export MALLOC_ARENA_MAX=4
 
+# Inspect CURRENT_JOB_WORKING_DIR and pull out genie job id if its a genie job
+if [ "$(echo $CURRENT_JOB_WORKING_DIR|perl -F/ -ane 'print "$F[3]\n";')" == "genie-jobs" ]; then
+   APPEND_GENIE_ID="--conf spark.genie.id=$(echo $CURRENT_JOB_WORKING_DIR|perl -F/ -ane 'print "$F[4]\n";')"
+fi
+
 exec $SPARK_HOME/bin/spark-submit \
-    --conf spark.yarn.historyServer.address=$MASTER_NODE_ADDR:18080 \
+    --conf spark.yarn.historyServer.address=$MASTER_NODE_ADDR:18080 $APPEND_GENIE_ID  \
     --conf spark.s3.use.instance.credentials=true \
     --jars $JARS_TO_SHIP \
     --deploy-mode cluster \

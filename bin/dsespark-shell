@@ -51,9 +51,14 @@ mkdir -p $SPARK_LOG_DIR
 export SPARK_LOG_FILE_PATH=$SPARK_LOG_DIR/$SPARK_LOG_FILE
 >&2 echo "Spark client logs are located at $SPARK_LOG_FILE_PATH"
 
+# Inspect CURRENT_JOB_WORKING_DIR and pull out genie job id if its a genie job
+if [ "$(echo $CURRENT_JOB_WORKING_DIR|perl -F/ -ane 'print "$F[3]\n";')" == "genie-jobs" ]; then
+   APPEND_GENIE_ID="--conf spark.genie.id=$(echo $CURRENT_JOB_WORKING_DIR|perl -F/ -ane 'print "$F[4]\n";')"
+fi
+
 exec $SPARK_HOME/bin/$1 \
     --conf spark.driver.host=$EC2_HOSTNAME \
-    --conf spark.yarn.historyServer.address=$MASTER_NODE_ADDR:18080 \
+    --conf spark.yarn.historyServer.address=$MASTER_NODE_ADDR:18080 $APPEND_GENIE_ID  \
     --jars $JARS_TO_SHIP \
     --driver-class-path $SPARK_DRIVER_CLASSPATH \
     --driver-java-options \
