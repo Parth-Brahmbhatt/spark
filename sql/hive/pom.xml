@@ -152,12 +152,12 @@
     <dependency>
       <groupId>com.netflix.metacat</groupId>
       <artifactId>metacat-client</artifactId>
-      <version>0.1.1</version>
+      <version>0.1.10</version>
     </dependency>
     <dependency>
       <groupId>com.netflix.metacat</groupId>
       <artifactId>metacat-common</artifactId>
-      <version>0.1.1</version>
+      <version>0.1.10</version>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.module</groupId>
@@ -182,7 +182,7 @@
     <dependency>
       <groupId>netflix</groupId>
       <artifactId>dse_pig</artifactId>
-      <version>4.106.0</version>
+      <version>4.109.0</version>
        <scope>compile</scope>
       <exclusions>
         <exclusion>
