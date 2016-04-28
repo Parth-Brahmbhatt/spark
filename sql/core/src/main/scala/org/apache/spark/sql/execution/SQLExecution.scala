@@ -60,7 +60,8 @@ private[sql] object SQLExecution {
       }
       r
     } else {
-      // Instead of throwing an exception, we execute the body that will be tracked within the previous tracking wrapper
+      // Instead of throwing an exception, we execute the body that will be tracked within the
+      // previous tracking wrapper
       body
     }
   }

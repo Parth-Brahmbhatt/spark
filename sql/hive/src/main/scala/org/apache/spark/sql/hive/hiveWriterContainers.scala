@@ -86,12 +86,18 @@ private[hive] class SparkHiveWriterContainer(
   private val batchidPattern: Regex = "(.*)/batchid=[\\d]+$".r
 
   @transient private var writers: mutable.HashMap[String, FileSinkOperator.RecordWriter] = _
-  @transient private lazy val committer = new DeltaOutputCommitter(
-    franklinTblName,
-    getUniqueId(),
-    getFinalLocation(),
-    true,
-    null)
+  @transient private lazy val testing = sys.props.contains("spark.testing")
+  @transient private lazy val committer = if (testing) {
+    conf.value.getOutputCommitter
+  } else {
+    new DeltaOutputCommitter(
+      franklinTblName,
+      getUniqueId(),
+      getFinalLocation(),
+      true,
+      null)
+  }
+
   @transient private lazy val jobContext = newJobContext(conf.value, jID.value)
   @transient private lazy val taskContext = newTaskAttemptContext(conf.value, taID.value)
   @transient private lazy val outputFormat =
@@ -171,9 +177,9 @@ private[hive] class SparkHiveWriterContainer(
               FileUtils.escapePathName(string, defaultPartName)
             }
           s"/$colName=$colString"
-        }.mkString + s"/batchid=${getBatchId()}"
+        }.mkString + (if (testing) "" else s"/batchid=${getBatchId()}")
       } else {
-        s"/batchid=${getBatchId()}"
+        if (testing) "" else s"/batchid=${getBatchId()}"
       }
 
     val columnDataFields = schema.iterator
@@ -200,7 +206,11 @@ private[hive] class SparkHiveWriterContainer(
       newFileSinkDesc.setCompressCodec(fileSinkConf.getCompressCodec)
       newFileSinkDesc.setCompressType(fileSinkConf.getCompressType)
 
-      val path = {
+      val path = if (testing) {
+        FileOutputFormat.getTaskOutputPath(
+          conf.value,
+          (dynamicPartPath + "/" + getOutputName).stripPrefix("/"))
+      } else {
         val sh: StorageHelper = new StorageHelper(taskContext, getUniqueId(), getFinalLocation())
         if(partColNames != null) {
           val partColNamesSet: java.util.Set[String] = partColNames.toSet.asJava
@@ -250,19 +260,21 @@ private[hive] class SparkHiveWriterContainer(
   }
 
   private def commit() {
-    // In DseStorage, metadata is written by PartitionedRecordWriter. But since in Spark.
-    // we don't use it, we instead write metadata in commit task.
-    val sh: StorageHelper = new StorageHelper(taskContext, getUniqueId(), getFinalLocation())
-    if(partColNames != null) {
-      val partColNamesSet: java.util.Set[String] = partColNames.toSet.asJava
-      sh.setPartitionKeys(partColNamesSet)
+    if (!testing) {
+      // In DseStorage, metadata is written by PartitionedRecordWriter. But since in Spark.
+      // we don't use it, we instead write metadata in commit task.
+      val sh: StorageHelper = new StorageHelper(taskContext, getUniqueId(), getFinalLocation())
+      if (partColNames != null) {
+        val partColNamesSet: java.util.Set[String] = partColNames.toSet.asJava
+        sh.setPartitionKeys(partColNamesSet)
+      }
+      val base: String = sh.getBaseTaskAttemptTempLocation
+      val file: Path = new Path(base, "_metadata")
+      val fs: FileSystem = file.getFileSystem(conf.value)
+      val os: ObjectOutputStream = new ObjectOutputStream(fs.create(file, true))
+      os.writeObject(partitionMetadata)
+      os.close
     }
-    val base: String = sh.getBaseTaskAttemptTempLocation
-    val file: Path = new Path(base, "_metadata")
-    val fs: FileSystem = file.getFileSystem(conf.value)
-    val os: ObjectOutputStream = new ObjectOutputStream(fs.create(file, true))
-    os.writeObject(partitionMetadata)
-    os.close
 
     SparkHadoopMapRedUtil.commitTask(committer, taskContext, jobID, splitID)
   }
