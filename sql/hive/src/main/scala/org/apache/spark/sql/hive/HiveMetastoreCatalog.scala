@@ -712,6 +712,9 @@ private[hive] case class MetastoreRelation
     (@transient private val sqlContext: SQLContext)
   extends LeafNode with MultiInstanceRelation with FileRelation with PartitionedRelation {
 
+  private[hive] def filesPerPartition: Int = table.properties
+      .get("spark.parquet.files-per-partition")
+      .map(_.toInt).getOrElse(1)
 
   /** Metacat API */
   @transient private val metacatApi: MetacatV1 = {
