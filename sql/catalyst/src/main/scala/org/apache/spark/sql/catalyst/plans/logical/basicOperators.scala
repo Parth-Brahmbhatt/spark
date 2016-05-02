@@ -167,7 +167,8 @@ case class InsertIntoTable(
     child: LogicalPlan,
     overwrite: Boolean,
     ifNotExists: Boolean,
-    isMatchByName: Boolean)
+    isMatchByName: Boolean,
+    options: Map[String, String])
   extends LogicalPlan {
 
   override def children: Seq[LogicalPlan] = child :: Nil

@@ -311,7 +311,7 @@ class Analyzer(
     }
 
     def apply(plan: LogicalPlan): LogicalPlan = plan resolveOperators {
-      case i @ InsertIntoTable(u: UnresolvedRelation, parts, child, _, _, _) if child.resolved =>
+      case i @ InsertIntoTable(u: UnresolvedRelation, parts, child, _, _, _, _) if child.resolved =>
         val table = getTable(u)
         // adding the table's partitions or validate the query's partition info
         table match {
@@ -362,7 +362,7 @@ class Analyzer(
   val ResolveOutputColumns = new ResolveOutputColumns
   class ResolveOutputColumns extends Rule[LogicalPlan] {
     def apply(plan: LogicalPlan): LogicalPlan = plan.transform {
-      case ins @ InsertIntoTable(relation: LogicalPlan, partition, _, _, _, _)
+      case ins @ InsertIntoTable(relation: LogicalPlan, partition, _, _, _, _, _)
           if ins.childrenResolved && !ins.resolved =>
         resolveOutputColumns(ins, expectedColumns(relation, partition), relation.toString)
     }

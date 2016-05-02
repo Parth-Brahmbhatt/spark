@@ -182,6 +182,7 @@ case class InsertIntoHiveTable(
     val testing = sys.props.contains("spark.testing")
     val tmpLocation = hiveContext.getExternalTmpPath(tableLocation)
     val fileSinkConf = if (testing) {
+      logWarning(s"Writing to temp location for testing: $tmpLocation")
       new FileSinkDesc(tmpLocation.toString, tableDesc, false)
     } else {
       new FileSinkDesc(tableLocation.toString, tableDesc, false)

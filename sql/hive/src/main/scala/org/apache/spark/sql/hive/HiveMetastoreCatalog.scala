@@ -528,21 +528,24 @@ private[hive] class HiveMetastoreCatalog(val client: ClientInterface, hive: Hive
 
       plan transformUp {
         // Write path
-        case InsertIntoTable(r: MetastoreRelation, partition, child, overwrite, ifNotExists, byName)
+        case InsertIntoTable(r: MetastoreRelation, partition, child, overwrite, ifNotExists, byName,
+            options)
           // Inserting into partitioned table is not supported in Parquet data source (yet).
           if !r.hiveQlTable.isPartitioned && hive.convertMetastoreParquet &&
             r.tableDesc.getSerdeClassName.toLowerCase.contains("parquet") =>
           val parquetRelation = convertToParquetRelation(r)
-          InsertIntoTable(parquetRelation, partition, child, overwrite, ifNotExists, byName)
+          InsertIntoTable(parquetRelation, partition, child, overwrite, ifNotExists, byName,
+            options)
 
         // Write path
         case InsertIntoHiveTable(r: MetastoreRelation,
-            partition, child, overwrite, ifNotExists, byName)
+            partition, child, overwrite, ifNotExists, byName, options)
           // Inserting into partitioned table is not supported in Parquet data source (yet).
           if !r.hiveQlTable.isPartitioned && hive.convertMetastoreParquet &&
             r.tableDesc.getSerdeClassName.toLowerCase.contains("parquet") =>
           val parquetRelation = convertToParquetRelation(r)
-          InsertIntoTable(parquetRelation, partition, child, overwrite, ifNotExists, byName)
+          InsertIntoTable(
+            parquetRelation, partition, child, overwrite, ifNotExists, byName, options)
 
         // Read path
         case relation: MetastoreRelation if hive.convertMetastoreParquet &&
@@ -666,7 +669,8 @@ private[hive] case class InsertIntoHiveTable(
     child: LogicalPlan,
     overwrite: Boolean,
     ifNotExists: Boolean,
-    matchByName: Boolean)
+    matchByName: Boolean,
+    options: Map[String, String])
   extends LogicalPlan {
 
   override def children: Seq[LogicalPlan] = child :: Nil
@@ -712,9 +716,9 @@ private[hive] case class MetastoreRelation
     (@transient private val sqlContext: SQLContext)
   extends LeafNode with MultiInstanceRelation with FileRelation with PartitionedRelation {
 
-  private[hive] def filesPerPartition: Int = table.properties
+  private[hive] def filesPerPartition: Option[Int] = table.properties
       .get("spark.parquet.files-per-partition")
-      .map(_.toInt).getOrElse(1)
+      .map(_.toInt)
 
   /** Metacat API */
   @transient private val metacatApi: MetacatV1 = {

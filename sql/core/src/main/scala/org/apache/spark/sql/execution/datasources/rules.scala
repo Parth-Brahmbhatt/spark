@@ -59,7 +59,7 @@ private[sql] case class PreWriteCheck(catalog: Catalog) extends (LogicalPlan => 
     plan.foreach {
       case i @ logical.InsertIntoTable(
         l @ LogicalRelation(t: InsertableRelation, _),
-        partition, query, overwrite, ifNotExists, _) =>
+        partition, query, overwrite, ifNotExists, _, _) =>
         // Right now, we do not support insert into a data source table with partition specs.
         if (partition.nonEmpty) {
           failAnalysis(s"Insert into a partition is not allowed because $l is not partitioned.")
@@ -77,7 +77,7 @@ private[sql] case class PreWriteCheck(catalog: Catalog) extends (LogicalPlan => 
         }
 
       case logical.InsertIntoTable(
-        LogicalRelation(r: HadoopFsRelation, _), part, query, overwrite, _, _) =>
+        LogicalRelation(r: HadoopFsRelation, _), part, query, overwrite, _, _, _) =>
         // We need to make sure the partition columns specified by users do match partition
         // columns of the relation.
         val existingPartitionColumns = r.partitionColumns.fieldNames.toSet
@@ -105,11 +105,11 @@ private[sql] case class PreWriteCheck(catalog: Catalog) extends (LogicalPlan => 
           // OK
         }
 
-      case logical.InsertIntoTable(l: LogicalRelation, _, _, _, _, _) =>
+      case logical.InsertIntoTable(l: LogicalRelation, _, _, _, _, _, _) =>
         // The relation in l is not an InsertableRelation.
         failAnalysis(s"$l does not allow insertion.")
 
-      case logical.InsertIntoTable(t, _, _, _, _, _) =>
+      case logical.InsertIntoTable(t, _, _, _, _, _, _) =>
         if (!t.isInstanceOf[LeafNode] || t == OneRowRelation || t.isInstanceOf[LocalRelation]) {
           failAnalysis(s"Inserting into an RDD-based table is not allowed.")
         } else {

@@ -87,7 +87,7 @@ case class CreateTableAsSelect(
       }
     } else {
       hiveContext.executePlan(InsertIntoTable(metastoreRelation, Map(), query,
-          overwrite = true, ifNotExists = false, isMatchByName = false)).toRdd
+          overwrite = true, ifNotExists = false, isMatchByName = false, options = Map.empty)).toRdd
     }
 
     Seq.empty[Row]

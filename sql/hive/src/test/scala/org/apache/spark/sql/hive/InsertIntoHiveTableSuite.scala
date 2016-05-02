@@ -294,7 +294,7 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
         val analyzed = sqlContext.executePlan(
           InsertIntoTable(UnresolvedRelation(TableIdentifier("partitioned")),
             Map("part" -> None), data.logicalPlan, overwrite = false, ifNotExists = false,
-            isMatchByName = false)).analyzed
+            isMatchByName = false, options = Map.empty)).analyzed
       }
     }
   }
@@ -436,12 +436,11 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
       data.write.insertInto("source")
       checkAnswer(sql("SELECT * FROM source"), data.collect().toSeq)
 
-      sqlContext.table("source").write.byName.insertInto("partitioned")
-
+      // Check the plan
       val queryExecution = sqlContext.executePlan(
         InsertIntoTable(UnresolvedRelation(TableIdentifier("partitioned")),
           Map("part" -> None), data.logicalPlan, overwrite = false, ifNotExists = false,
-          isMatchByName = true))
+          isMatchByName = true, Map("filesPerPartition" -> "1")))
       val sourceOutput = queryExecution.analyzed.children(0).output
       val plan = queryExecution.sparkPlan
 
@@ -451,6 +450,42 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
 
       val isPartitioned = plan.outputPartitioning.satisfies(clustering)
       assert(isPartitioned)
+
+      // validate the write
+      sqlContext.table("source").write.byName.filesPerPartition(1).insertInto("partitioned")
+      val expected = data.select("id", "data", "part")
+      checkAnswer(sql("SELECT * FROM partitioned"), expected.collect().toSeq)
+    }
+  }
+
+  test("Test InsertIntoTable with filesPerPartition(3)") {
+    withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
+      hiveContext.hiveconf.set("hive.exec.dynamic.partition.mode", "nonstrict")
+      sql("CREATE TABLE source (data string, part string, id bigint)")
+      sql("CREATE TABLE partitioned (id bigint, data string) PARTITIONED BY (part string) " +
+          "STORED AS PARQUET")
+
+      val data = (1 to 10).map(i => (s"data-$i", if ((i % 2) == 0) "even" else "odd", i))
+          .toDF("data", "part", "id")
+      data.write.insertInto("source")
+      checkAnswer(sql("SELECT * FROM source"), data.collect().toSeq)
+
+      // Check the plan
+      val queryExecution = sqlContext.executePlan(
+        InsertIntoTable(UnresolvedRelation(TableIdentifier("partitioned")),
+          Map("part" -> None), data.logicalPlan, overwrite = false, ifNotExists = false,
+          isMatchByName = true, Map("filesPerPartition" -> "3")))
+      val sourceOutput = queryExecution.analyzed.children(0).output
+      val plan = queryExecution.sparkPlan
+
+      val clustering = ClusteredDistribution(sourceOutput.find(_.name == "part").toSeq)
+      val isSorted = SortOrder.satisfies(plan.children(0).outputOrdering, clustering)
+      assert(isSorted)
+
+      // validate the write
+      sqlContext.table("source").write.byName.filesPerPartition(3).insertInto("partitioned")
+      val expected = data.select("id", "data", "part")
+      checkAnswer(sql("SELECT * FROM partitioned"), expected.collect().toSeq)
     }
   }
 }

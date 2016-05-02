@@ -187,7 +187,8 @@ final class DataFrameWriter private[sql](df: DataFrame) {
         input,
         overwrite,
         ifNotExists = false,
-        isMatchByName = matchOutputColumnsByName)).toRdd
+        isMatchByName = matchOutputColumnsByName,
+        options = extraOptions.toMap)).toRdd
   }
 
   private def normalizedParCols: Option[Seq[String]] = partitioningColumns.map { parCols =>
@@ -198,6 +199,11 @@ final class DataFrameWriter private[sql](df: DataFrame) {
         .getOrElse(throw new AnalysisException(s"Partition column $col not found in existing " +
           s"columns (${df.logicalPlan.output.map(_.name).mkString(", ")})"))
     }
+  }
+
+  def filesPerPartition(numFiles: Int): DataFrameWriter = {
+    extraOptions.put("filesPerPartition", numFiles.toString)
+    this
   }
 
   def byName: DataFrameWriter = {

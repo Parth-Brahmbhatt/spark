@@ -1399,7 +1399,7 @@ https://cwiki.apache.org/confluence/display/Hive/Enhanced+Aggregation%2C+Cube%2C
       }.toMap).getOrElse(Map.empty)
 
       InsertIntoTable(UnresolvedRelation(tableIdent, None), partitionKeys, query, overwrite,
-        false, false)
+        false, false, Map.empty)
 
     case Token(destinationToken(),
            Token("TOK_TAB",
@@ -1420,7 +1420,7 @@ https://cwiki.apache.org/confluence/display/Hive/Enhanced+Aggregation%2C+Cube%2C
       }.toMap).getOrElse(Map.empty)
 
       InsertIntoTable(UnresolvedRelation(tableIdent, None), partitionKeys, query, overwrite,
-        true, false)
+        true, false, Map.empty)
 
     case a: ASTNode =>
       throw new NotImplementedError(s"No parse rules for ${a.getName}:" +

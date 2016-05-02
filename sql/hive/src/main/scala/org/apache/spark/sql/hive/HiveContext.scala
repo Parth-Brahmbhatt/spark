@@ -43,7 +43,7 @@ import org.apache.spark.sql.SQLConf.SQLConfEntry._
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenFallback
-import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, Expression, LeafExpression, Literal, Multiply, Pmod, Rand, SortOrder}
+import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, Cast, Expression, LeafExpression, Literal, Multiply, Pmod, Rand, SortOrder}
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.catalyst.rules.Rule
@@ -809,17 +809,26 @@ private[hive] object HiveContext {
 
 
 object RepartitionForColumnarFormats extends Rule[LogicalPlan] {
-  val perPartition = 3
   override def apply(plan: LogicalPlan): LogicalPlan = plan transformUp {
     // TODO: Add more cases that write to Columnar formats (e.g., CreateTableUsingAsSelect)
 
-    case insertInto @ InsertIntoHiveTable(rel: MetastoreRelation, partition, data, _, _, _)
+    case insertInto @ InsertIntoHiveTable(rel: MetastoreRelation, partition, data, _, _, _, options)
       if insertInto.resolved && isColumnar(rel) && !hasSortOrRepartition(data) =>
-      insertInto.copy(child = buildRepartitionAndSort(rel, data, rel.filesPerPartition))
+      options.get("filesPerPartition").map(_.toInt).orElse(rel.filesPerPartition) match {
+        case Some(numFiles) =>
+          insertInto.copy(child = buildRepartitionAndSort(rel, data, numFiles))
+        case None =>
+          insertInto
+      }
 
-    case insertInto @ InsertIntoTable(rel: MetastoreRelation, partition, data, _, _, _)
+    case insertInto @ InsertIntoTable(rel: MetastoreRelation, partition, data, _, _, _, options)
       if insertInto.resolved && isColumnar(rel) && !hasSortOrRepartition(data) =>
-      insertInto.copy(child = buildRepartitionAndSort(rel, data, rel.filesPerPartition))
+      options.get("filesPerPartition").map(_.toInt).orElse(rel.filesPerPartition) match {
+        case Some(numFiles) =>
+          insertInto.copy(child = buildRepartitionAndSort(rel, data, numFiles))
+        case None =>
+          insertInto
+      }
   }
 
   private def isColumnar(rel: MetastoreRelation): Boolean = {
@@ -840,7 +849,9 @@ object RepartitionForColumnarFormats extends Rule[LogicalPlan] {
     val sortExprs = inputExprs(rel.partitionColumns, data)
     val partitionExprs = if (perPartition > 1) {
       // Use a constant seed to have consistent behavior across runs
-      sortExprs :+ Pmod(Multiply(Rand(0L), Literal(perPartition)), Literal(perPartition))
+      sortExprs :+ Pmod(
+        Cast(Multiply(Rand(0L), Literal(perPartition)), IntegerType),
+        Literal(perPartition))
     } else {
       sortExprs
     }
