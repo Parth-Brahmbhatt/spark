@@ -19,14 +19,12 @@ package org.apache.spark.sql.execution.datasources.parquet
 
 import java.io.Serializable
 
-import org.apache.parquet.filter2.predicate.FilterApi._
-import org.apache.parquet.filter2.predicate._
-import org.apache.parquet.io.api.Binary
-import org.apache.parquet.schema.OriginalType
-import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName
-
 import org.apache.spark.sql.sources
 import org.apache.spark.sql.types._
+
+import org.apache.parquet.filter2.predicate.FilterApi.{booleanColumn, doubleColumn, floatColumn, intColumn, longColumn, binaryColumn}
+import org.apache.parquet.filter2.predicate.{FilterApi, FilterPredicate, Statistics, UserDefinedPredicate}
+import org.apache.parquet.io.api.Binary
 
 private[sql] object ParquetFilters {
   case class SetInFilter[T <: Comparable[T]](
@@ -54,7 +52,6 @@ private[sql] object ParquetFilters {
       (n: String, v: Any) => FilterApi.eq(doubleColumn(n), v.asInstanceOf[java.lang.Double])
 
     // See https://issues.apache.org/jira/browse/SPARK-11153
-    /*
     // Binary.fromString and Binary.fromByteArray don't accept null values
     case StringType =>
       (n: String, v: Any) => FilterApi.eq(
@@ -64,7 +61,6 @@ private[sql] object ParquetFilters {
       (n: String, v: Any) => FilterApi.eq(
         binaryColumn(n),
         Option(v).map(b => Binary.fromByteArray(v.asInstanceOf[Array[Byte]])).orNull)
-     */
   }
 
   private val makeNotEq: PartialFunction[DataType, (String, Any) => FilterPredicate] = {
@@ -80,7 +76,6 @@ private[sql] object ParquetFilters {
       (n: String, v: Any) => FilterApi.notEq(doubleColumn(n), v.asInstanceOf[java.lang.Double])
 
     // See https://issues.apache.org/jira/browse/SPARK-11153
-    /*
     case StringType =>
       (n: String, v: Any) => FilterApi.notEq(
         binaryColumn(n),
@@ -89,7 +84,6 @@ private[sql] object ParquetFilters {
       (n: String, v: Any) => FilterApi.notEq(
         binaryColumn(n),
         Option(v).map(b => Binary.fromByteArray(v.asInstanceOf[Array[Byte]])).orNull)
-     */
   }
 
   private val makeLt: PartialFunction[DataType, (String, Any) => FilterPredicate] = {
@@ -103,7 +97,6 @@ private[sql] object ParquetFilters {
       (n: String, v: Any) => FilterApi.lt(doubleColumn(n), v.asInstanceOf[java.lang.Double])
 
     // See https://issues.apache.org/jira/browse/SPARK-11153
-    /*
     case StringType =>
       (n: String, v: Any) =>
         FilterApi.lt(binaryColumn(n),
@@ -111,7 +104,6 @@ private[sql] object ParquetFilters {
     case BinaryType =>
       (n: String, v: Any) =>
         FilterApi.lt(binaryColumn(n), Binary.fromByteArray(v.asInstanceOf[Array[Byte]]))
-     */
   }
 
   private val makeLtEq: PartialFunction[DataType, (String, Any) => FilterPredicate] = {
@@ -125,7 +117,6 @@ private[sql] object ParquetFilters {
       (n: String, v: Any) => FilterApi.ltEq(doubleColumn(n), v.asInstanceOf[java.lang.Double])
 
     // See https://issues.apache.org/jira/browse/SPARK-11153
-    /*
     case StringType =>
       (n: String, v: Any) =>
         FilterApi.ltEq(binaryColumn(n),
@@ -133,7 +124,6 @@ private[sql] object ParquetFilters {
     case BinaryType =>
       (n: String, v: Any) =>
         FilterApi.ltEq(binaryColumn(n), Binary.fromByteArray(v.asInstanceOf[Array[Byte]]))
-     */
   }
 
   private val makeGt: PartialFunction[DataType, (String, Any) => FilterPredicate] = {
@@ -147,7 +137,6 @@ private[sql] object ParquetFilters {
       (n: String, v: Any) => FilterApi.gt(doubleColumn(n), v.asInstanceOf[java.lang.Double])
 
     // See https://issues.apache.org/jira/browse/SPARK-11153
-    /*
     case StringType =>
       (n: String, v: Any) =>
         FilterApi.gt(binaryColumn(n),
@@ -155,7 +144,6 @@ private[sql] object ParquetFilters {
     case BinaryType =>
       (n: String, v: Any) =>
         FilterApi.gt(binaryColumn(n), Binary.fromByteArray(v.asInstanceOf[Array[Byte]]))
-     */
   }
 
   private val makeGtEq: PartialFunction[DataType, (String, Any) => FilterPredicate] = {
@@ -169,7 +157,6 @@ private[sql] object ParquetFilters {
       (n: String, v: Any) => FilterApi.gtEq(doubleColumn(n), v.asInstanceOf[java.lang.Double])
 
     // See https://issues.apache.org/jira/browse/SPARK-11153
-    /*
     case StringType =>
       (n: String, v: Any) =>
         FilterApi.gtEq(binaryColumn(n),
@@ -177,7 +164,6 @@ private[sql] object ParquetFilters {
     case BinaryType =>
       (n: String, v: Any) =>
         FilterApi.gtEq(binaryColumn(n), Binary.fromByteArray(v.asInstanceOf[Array[Byte]]))
-     */
   }
 
   private val makeInSet: PartialFunction[DataType, (String, Set[Any]) => FilterPredicate] = {
@@ -195,7 +181,6 @@ private[sql] object ParquetFilters {
         FilterApi.userDefined(doubleColumn(n), SetInFilter(v.asInstanceOf[Set[java.lang.Double]]))
 
     // See https://issues.apache.org/jira/browse/SPARK-11153
-    /*
     case StringType =>
       (n: String, v: Set[Any]) =>
         FilterApi.userDefined(binaryColumn(n),
@@ -204,7 +189,6 @@ private[sql] object ParquetFilters {
       (n: String, v: Set[Any]) =>
         FilterApi.userDefined(binaryColumn(n),
           SetInFilter(v.map(e => Binary.fromByteArray(e.asInstanceOf[Array[Byte]]))))
-     */
   }
 
   /**
@@ -212,8 +196,6 @@ private[sql] object ParquetFilters {
    */
   def createFilter(schema: StructType, predicate: sources.Filter): Option[FilterPredicate] = {
     val dataTypeOf = schema.map(f => f.name -> f.dataType).toMap
-
-    relaxParquetValidTypeMap
 
     // NOTE:
     //
@@ -280,36 +262,5 @@ private[sql] object ParquetFilters {
 
       case _ => None
     }
-  }
-
-  // !! HACK ALERT !!
-  //
-  // This lazy val is a workaround for PARQUET-201, and should be removed once we upgrade to
-  // parquet-mr 1.8.1 or higher versions.
-  //
-  // In Parquet, not all types of columns can be used for filter push-down optimization.  The set
-  // of valid column types is controlled by `ValidTypeMap`.  Unfortunately, in parquet-mr 1.7.0 and
-  // prior versions, the limitation is too strict, and doesn't allow `BINARY (ENUM)` columns to be
-  // pushed down.
-  //
-  // This restriction is problematic for Spark SQL, because Spark SQL doesn't have a type that maps
-  // to Parquet original type `ENUM` directly, and always converts `ENUM` to `StringType`.  Thus,
-  // a predicate involving a `ENUM` field can be pushed-down as a string column, which is perfectly
-  // legal except that it fails the `ValidTypeMap` check.
-  //
-  // Here we add `BINARY (ENUM)` into `ValidTypeMap` lazily via reflection to workaround this issue.
-  private lazy val relaxParquetValidTypeMap: Unit = {
-    val constructor = Class
-      .forName(classOf[ValidTypeMap].getCanonicalName + "$FullTypeDescriptor")
-      .getDeclaredConstructor(classOf[PrimitiveTypeName], classOf[OriginalType])
-
-    constructor.setAccessible(true)
-    val enumTypeDescriptor = constructor
-      .newInstance(PrimitiveTypeName.BINARY, OriginalType.ENUM)
-      .asInstanceOf[AnyRef]
-
-    val addMethod = classOf[ValidTypeMap].getDeclaredMethods.find(_.getName == "add").get
-    addMethod.setAccessible(true)
-    addMethod.invoke(null, classOf[Binary], enumTypeDescriptor)
   }
 }

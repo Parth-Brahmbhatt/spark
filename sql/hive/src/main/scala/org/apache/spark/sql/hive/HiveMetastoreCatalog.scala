@@ -424,6 +424,10 @@ private[hive] class HiveMetastoreCatalog(val client: ClientInterface, hive: Hive
     // serialize the Metastore schema to JSON and pass it as a data source option because of the
     // evil case insensitivity issue, which is reconciled within `ParquetRelation`.
     val parquetOptions = Map(
+      // because this passes no paths to ParquetRelation to start with an empty cache, pass the
+      // base path to avoid searching the file system for partitions above the table root. See
+      // `basePaths` in HadoopFsRelation.
+      "basePath" -> metastoreRelation.hiveQlTable.getDataLocation.toString,
       ParquetRelation.METASTORE_SCHEMA -> metastoreSchema.json,
       ParquetRelation.MERGE_SCHEMA -> mergeSchema.toString,
       ParquetRelation.METASTORE_TABLE_NAME -> TableIdentifier(
@@ -483,11 +487,11 @@ private[hive] class HiveMetastoreCatalog(val client: ClientInterface, hive: Hive
       val partitionSpec = PartitionSpec(partitionSchema, partitions)
       val paths = partitions.map(_.path)
 
-      val cached = getCached(tableIdentifier, paths, metastoreSchema, Some(partitionSpec))
+      val cached = getCached(tableIdentifier, Seq.empty, metastoreSchema, Some(partitionSpec))
       val parquetRelation = cached.getOrElse {
         val created = LogicalRelation(
           new ParquetRelation(
-            paths.toArray, None, Some(partitionSpec), parquetOptions)(hive))
+            Array.empty, None, Some(partitionSpec), parquetOptions)(hive))
         cachedDataSourceTables.put(tableIdentifier, created)
         created
       }
@@ -496,10 +500,10 @@ private[hive] class HiveMetastoreCatalog(val client: ClientInterface, hive: Hive
     } else {
       val paths = Seq(metastoreRelation.hiveQlTable.getDataLocation.toString)
 
-      val cached = getCached(tableIdentifier, paths, metastoreSchema, None)
+      val cached = getCached(tableIdentifier, Seq.empty, metastoreSchema, None)
       val parquetRelation = cached.getOrElse {
         val created = LogicalRelation(
-          new ParquetRelation(paths.toArray, None, None, parquetOptions)(hive))
+          new ParquetRelation(Array.empty, None, None, parquetOptions)(hive))
         cachedDataSourceTables.put(tableIdentifier, created)
         created
       }
