@@ -473,14 +473,31 @@ abstract class HadoopFsRelation private[sql](
       }
     }
 
-    def refresh(): Unit = {
+    def lookup(inputs: Array[String]): Array[FileStatus] = {
+      val paths = inputs.map(new Path(_))
+      val missingPaths = paths.filterNot( p =>
+        leafFiles.contains(p) || leafDirToChildrenFiles.contains(p))
+      cachePaths(missingPaths.map(_.toString))
+
+      // First assumes `input` is a directory path, and tries to get all files contained in it.
+      paths.flatMap { path =>
+        leafDirToChildrenFiles.getOrElse(
+          path,
+          // Otherwise, `input` might be a file path
+          fileStatusCache.leafFiles.get(path).toArray)
+      }
+    }
+
+    private def cachePaths(paths: Array[String]): Unit = {
       val files = listLeafFiles(paths)
-
-      leafFiles.clear()
-      leafDirToChildrenFiles.clear()
-
       leafFiles ++= files.map(f => f.getPath -> f)
       leafDirToChildrenFiles ++= files.toArray.groupBy(_.getPath.getParent)
+    }
+
+    def refresh(): Unit = {
+      leafFiles.clear()
+      leafDirToChildrenFiles.clear()
+      cachePaths(paths)
     }
   }
 
@@ -644,20 +661,10 @@ abstract class HadoopFsRelation private[sql](
       filters: Array[Filter],
       inputPaths: Array[String],
       broadcastedConf: Broadcast[SerializableConfiguration]): RDD[InternalRow] = {
-    val inputStatuses = inputPaths.flatMap { input =>
-      val path = new Path(input)
-
-      // First assumes `input` is a directory path, and tries to get all files contained in it.
-      fileStatusCache.leafDirToChildrenFiles.getOrElse(
-        path,
-        // Otherwise, `input` might be a file path
-        fileStatusCache.leafFiles.get(path).toArray
-      ).filter { status =>
-        val name = status.getPath.getName
-        !name.startsWith("_") && !name.startsWith(".")
-      }
+    val inputStatuses = fileStatusCache.lookup(inputPaths).filter { status =>
+      val name = status.getPath.getName
+      !name.startsWith("_") && !name.startsWith(".")
     }
-
     buildInternalScan(requiredColumns, filters, inputStatuses, broadcastedConf)
   }
 

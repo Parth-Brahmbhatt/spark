@@ -20,11 +20,12 @@ package org.apache.spark.sql.hive
 import java.io.File
 
 import org.apache.hadoop.hive.conf.HiveConf
-import org.scalatest.BeforeAndAfter
 
+import org.scalatest.BeforeAndAfter
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{QueryTest, _}
 import org.apache.spark.sql.catalyst.plans.logical.InsertIntoTable
+import org.apache.spark.sql.execution.QueryExecutionException
 import org.apache.spark.sql.hive.test.TestHiveSingleton
 import org.apache.spark.sql.test.SQLTestUtils
 import org.apache.spark.sql.types._
@@ -240,6 +241,7 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
 
   test("Detect table partitioning") {
     withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
+      hiveContext.hiveconf.set("hive.exec.dynamic.partition.mode", "nonstrict")
       sql("CREATE TABLE source (id bigint, data string, part string)")
       val data = (1 to 10).map(i => (i, s"data-$i", if ((i % 2) == 0) "even" else "odd")).toDF()
 
@@ -256,6 +258,7 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
 
   test("Detect table partitioning with correct partition order") {
     withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
+      hiveContext.hiveconf.set("hive.exec.dynamic.partition.mode", "nonstrict")
       sql("CREATE TABLE source (id bigint, part2 string, part1 string, data string)")
       val data = (1 to 10).map(i => (i, if ((i % 2) == 0) "even" else "odd", "p", s"data-$i"))
           .toDF("id", "part2", "part1", "data")
@@ -291,8 +294,8 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
 
       // should be able to insert an expression using AS when mapping columns by name
       val writer = sqlContext.table("source")
-          .selectExpr("id", "part", "CONCAT('data-', id) as data")
-          .write.byName
+          .selectExpr("id", "CONCAT('data-', id) as data", "part")
+          .write
       writer.partitionMap = Some(Map("static" -> Some("spark"), "part" -> None))
       writer.insertInto("partitioned")
       checkAnswer(

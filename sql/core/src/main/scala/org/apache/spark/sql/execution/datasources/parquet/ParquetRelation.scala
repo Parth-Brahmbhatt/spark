@@ -421,8 +421,7 @@ private[sql] class ParquetRelation(
             .orElse(readSchema())
             .orElse(maybeMetastoreSchema)
             .getOrElse(throw new AnalysisException(
-              s"Failed to discover schema of Parquet file(s) in the following location(s):\n" +
-                paths.mkString("\n\t")))
+              s"Failed to discover schema of Parquet file(s)"))
 
           // If this Parquet relation is converted from a Hive Metastore table, must reconcile case
           // case insensitivity issue and possible schema mismatch (probably caused by schema
@@ -512,7 +511,7 @@ private[sql] class ParquetRelation(
       assert(
         filesToTouch.nonEmpty || maybeDataSchema.isDefined || maybeMetastoreSchema.isDefined,
         "No predefined schema found, " +
-          s"and no Parquet data files or summary files found under ${paths.mkString(", ")}.")
+          s"and no Parquet data files or summary files found.")
 
       ParquetRelation.mergeSchemasInParallel(filesToTouch, sqlContext)
     }
