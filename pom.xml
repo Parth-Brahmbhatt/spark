@@ -1986,6 +1986,7 @@
                 <goal>testCompile</goal>
               </goals>
             </execution>
+            <!--
             <execution>
               <id>attach-scaladocs</id>
               <phase>verify</phase>
@@ -1993,6 +1994,7 @@
                 <goal>doc-jar</goal>
               </goals>
             </execution>
+            -->
           </executions>
           <configuration>
             <scalaVersion>${scala.version}</scalaVersion>
@@ -2085,8 +2087,9 @@
           <configuration>
             <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>
             <junitxml>.</junitxml>
-            <filereports>SparkTestSuite.txt</filereports>
+            <filereports>WF SparkTestSuite.txt</filereports>
             <argLine>-ea -Xmx3g -XX:MaxPermSize=${MaxPermGen} -XX:ReservedCodeCacheSize=${CodeCacheSize}</argLine>
+            <logForkedProcessCommand>true</logForkedProcessCommand>
             <stderr/>
             <environmentVariables>
               <!--
