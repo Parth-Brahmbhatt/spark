@@ -34,7 +34,6 @@ if [ -z "$MASTER_NODE_ADDR" ]; then
 fi
 
 export SPARK_DRIVER_CLASSPATH="$SPARK_CONF_DIR:$SPARK_HOME/lib/*:$($HADOOP_HOME/bin/hadoop classpath)"
-export SPARK_LOCAL_HOSTNAME=$EC2_HOSTNAME
 export MALLOC_ARENA_MAX=4
 
 # When spark shell runs on genie, SPARK_LOG_DIR/FILE are not set
@@ -57,7 +56,6 @@ if [ "$(echo $CURRENT_JOB_WORKING_DIR|perl -F/ -ane 'print "$F[3]\n";')" == "gen
 fi
 
 exec $SPARK_HOME/bin/$1 \
-    --conf spark.driver.host=$EC2_HOSTNAME \
     --conf spark.yarn.historyServer.address=$MASTER_NODE_ADDR:18080 $APPEND_GENIE_ID  \
     --jars $JARS_TO_SHIP \
     --driver-class-path $SPARK_DRIVER_CLASSPATH \
