@@ -480,6 +480,7 @@ class HiveContext private[hive](
       override val extendedResolutionRules =
         catalog.ParquetConversions ::
         catalog.CreateTables ::
+        catalog.WriteToDirs ::
         ExtractPythonUDFs ::
         ResolveHiveWindowFunction ::
         RepartitionForColumnarFormats ::

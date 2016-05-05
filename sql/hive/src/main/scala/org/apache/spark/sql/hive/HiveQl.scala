@@ -28,7 +28,7 @@ import org.apache.hadoop.hive.conf.HiveConf.ConfVars
 import org.apache.hadoop.hive.ql.exec.{FunctionInfo, FunctionRegistry}
 import org.apache.hadoop.hive.ql.lib.Node
 import org.apache.hadoop.hive.ql.parse._
-import org.apache.hadoop.hive.ql.plan.PlanUtils
+import org.apache.hadoop.hive.ql.plan.{TableDesc, PlanUtils}
 import org.apache.hadoop.hive.ql.session.SessionState
 import org.apache.hadoop.hive.ql.{Context, ErrorMsg}
 import org.apache.hadoop.hive.serde.serdeConstants
@@ -85,6 +85,22 @@ private[hive] case class CreateViewAsSelect(
     sql: String) extends UnaryNode with Command {
   override def output: Seq[Attribute] = Seq.empty[Attribute]
   override lazy val resolved: Boolean = false
+}
+
+/**
+  * Logical node for "INSERT OVERWRITE [LOCAL] DIRECTORY directory
+  * [ROW FORMAT row_format] STORED AS file_format SELECT ... FROM ..."
+  * @param path the target path to write data.
+  * @param child the child logical plan.
+  * @param isLocal whether to write data to local file system.
+  * @param desc describe the write property such as file format.
+  */
+private[hive] case class WriteToDirectory(
+                                           path: String,
+                                           child: LogicalPlan,
+                                           isLocal: Boolean,
+                                           desc: TableDesc) extends UnaryNode with Command {
+  override def output: Seq[Attribute] = Seq.empty[Attribute]
 }
 
 /** Provides a mapping from HiveQL statements to catalyst logical plans and expression trees. */
@@ -1383,6 +1399,19 @@ https://cwiki.apache.org/confluence/display/Hive/Enhanced+Aggregation%2C+Cube%2C
       query
 
     case Token(destinationToken(),
+    Token("TOK_DIR", path :: formats) :: Nil) =>
+      var isLocal = false
+      formats.collect {
+        case Token("LOCAL", others) =>
+          isLocal = true
+      }
+      WriteToDirectory(
+        BaseSemanticAnalyzer.unescapeSQLString(path.getText),
+        query,
+        isLocal,
+        parseTableDesc(formats))
+
+    case Token(destinationToken(),
            Token("TOK_TAB",
               tableArgs) :: Nil) =>
       val Some(tableNameParts) :: partitionClause :: Nil =
@@ -1855,6 +1884,81 @@ https://cwiki.apache.org/confluence/display/Hive/Enhanced+Aggregation%2C+Cube%2C
              |${dumpTree(a).toString}
            """.stripMargin)
     }
+  }
+
+  def parseTableDesc(nodeList: Seq[ASTNode]): TableDesc = {
+    import org.apache.hadoop.hive.ql.plan._
+
+    val createTableDesc = new CreateTableDesc()
+
+    nodeList.collect {
+      case Token("TOK_FILEFORMAT_GENERIC", child :: Nil) =>
+        child.getText().toLowerCase(Locale.ENGLISH) match {
+          case "orc" =>
+            createTableDesc.setOutputFormat("org.apache.hadoop.hive.ql.io.orc.OrcOutputFormat")
+            createTableDesc.setSerName("org.apache.hadoop.hive.ql.io.orc.OrcSerde")
+
+          case "parquet" =>
+            createTableDesc
+              .setOutputFormat("org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat")
+            createTableDesc
+              .setSerName("org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe")
+
+          case "rcfile" =>
+            createTableDesc.setOutputFormat("org.apache.hadoop.hive.ql.io.RCFileOutputFormat")
+            createTableDesc.setSerName(hiveConf.getVar(HiveConf.ConfVars.HIVEDEFAULTRCFILESERDE))
+
+          case "textfile" =>
+            createTableDesc
+              .setOutputFormat("org.apache.hadoop.hive.ql.io.IgnoreKeyTextOutputFormat")
+
+          case "sequencefile" =>
+            createTableDesc.setOutputFormat("org.apache.hadoop.mapred.SequenceFileOutputFormat")
+
+          case _ =>
+            throw new SemanticException(
+              s"Unrecognized file format in STORED AS clause: ${child.getText}")
+        }
+
+      case Token("TOK_TABLEROWFORMAT", Token("TOK_SERDEPROPS", child :: Nil) :: Nil) =>
+        val serdeParams = new java.util.HashMap[String, String]()
+        child match {
+          case Token("TOK_TABLEROWFORMATFIELD", rowChild1 :: rowChild2) =>
+            val fieldDelim = BaseSemanticAnalyzer.unescapeSQLString (rowChild1.getText())
+            serdeParams.put(serdeConstants.FIELD_DELIM, fieldDelim)
+            serdeParams.put(serdeConstants.SERIALIZATION_FORMAT, fieldDelim)
+            if (rowChild2.length > 1) {
+              val fieldEscape = BaseSemanticAnalyzer.unescapeSQLString (rowChild2(0).getText)
+              serdeParams.put(serdeConstants.ESCAPE_CHAR, fieldEscape)
+            }
+          case Token("TOK_TABLEROWFORMATCOLLITEMS", rowChild :: Nil) =>
+            val collItemDelim = BaseSemanticAnalyzer.unescapeSQLString(rowChild.getText)
+            serdeParams.put(serdeConstants.COLLECTION_DELIM, collItemDelim)
+          case Token("TOK_TABLEROWFORMATMAPKEYS", rowChild :: Nil) =>
+            val mapKeyDelim = BaseSemanticAnalyzer.unescapeSQLString(rowChild.getText)
+            serdeParams.put(serdeConstants.MAPKEY_DELIM, mapKeyDelim)
+          case Token("TOK_TABLEROWFORMATLINES", rowChild :: Nil) =>
+            val lineDelim = BaseSemanticAnalyzer.unescapeSQLString(rowChild.getText)
+            if (!(lineDelim == "\n") && !(lineDelim == "10")) {
+              throw new AnalysisException(
+                SemanticAnalyzer.generateErrorMessage(
+                  rowChild,
+                  ErrorMsg.LINES_TERMINATED_BY_NON_NEWLINE.getMsg))
+            }
+            serdeParams.put(serdeConstants.LINE_DELIM, lineDelim)
+
+          case Token("TOK_TABLEROWFORMATNULL", rowChild :: Nil) =>
+            val nullFormat = BaseSemanticAnalyzer.unescapeSQLString(rowChild.getText)
+          // TODO support the nullFormat
+          case _ => assert(false)
+        }
+        createTableDesc.setSerdeProps(serdeParams)
+
+      case _ => // Unsupport features
+    }
+    // Note: we do not know the columns and column types when parsing, so here
+    // just input `null` for column types. column types will be set in analyzer.
+    PlanUtils.getDefaultTableDesc(createTableDesc, "", null)
   }
 
   def dumpTree(node: Node, builder: StringBuilder = new StringBuilder, indent: Int = 0)

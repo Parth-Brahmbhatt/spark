@@ -51,18 +51,12 @@ case class InsertIntoHiveTable(
     partition: Map[String, Option[String]],
     child: SparkPlan,
     overwrite: Boolean,
-    ifNotExists: Boolean) extends UnaryNode with HiveInspectors {
+    ifNotExists: Boolean) extends UnaryNode with HiveInspectors with SaveAsHiveFile {
 
   @transient val sc: HiveContext = sqlContext.asInstanceOf[HiveContext]
   @transient lazy val outputClass = newSerializer(table.tableDesc).getSerializedClass
   @transient private lazy val hiveContext = new Context(sc.hiveconf)
   @transient private lazy val catalog = sc.catalog
-
-  private def newSerializer(tableDesc: TableDesc): Serializer = {
-    val serializer = tableDesc.getDeserializerClass.newInstance().asInstanceOf[Serializer]
-    serializer.initialize(null, tableDesc.getProperties)
-    serializer
-  }
 
   private def deSerializeValue(value: String, dataType: DataType): Object = {
     if (value == null) return null
@@ -99,70 +93,6 @@ case class InsertIntoHiveTable(
   }
 
   def output: Seq[Attribute] = Seq.empty
-
-  private def saveAsHiveFile(
-      rdd: RDD[InternalRow],
-      valueClass: Class[_],
-      fileSinkConf: FileSinkDesc,
-      conf: SerializableJobConf,
-      writerContainer: SparkHiveWriterContainer): Unit = {
-    assert(valueClass != null, "Output value class not set")
-    conf.value.setOutputValueClass(valueClass)
-
-    val outputFileFormatClassName = fileSinkConf.getTableInfo.getOutputFileFormatClassName
-    assert(outputFileFormatClassName != null, "Output format class not set")
-    conf.value.set("mapred.output.format.class", outputFileFormatClassName)
-
-    FileOutputFormat.setOutputPath(
-      conf.value,
-      SparkHiveWriterContainer.createPathFromString(fileSinkConf.getDirName, conf.value))
-    log.debug("Saving as hadoop file of type " + valueClass.getSimpleName)
-
-    writerContainer.driverSideSetup()
-    sc.sparkContext.runJob(rdd, writeToFile _)
-    writerContainer.commitJob()
-
-    // Note that this function is executed on executor side
-    def writeToFile(context: TaskContext, iterator: Iterator[InternalRow]): Unit = {
-      val serializer = newSerializer(fileSinkConf.getTableInfo)
-      val standardOI = ObjectInspectorUtils
-        .getStandardObjectInspector(
-          fileSinkConf.getTableInfo.getDeserializer.getObjectInspector,
-          ObjectInspectorCopyOption.JAVA)
-        .asInstanceOf[StructObjectInspector]
-
-      val fieldOIs = standardOI.getAllStructFieldRefs.asScala
-        .map(_.getFieldObjectInspector).toArray
-      val dataTypes: Array[DataType] = child.output.map(_.dataType).toArray
-      val fieldNames: Array[String] = child.output.map(_.name).toArray
-      val tableProperties = fileSinkConf.getTableInfo.getProperties
-      val storeDefaults = conf.value.getBoolean("dse.store.default", false)
-      val fieldDefaultValues: Array[Object] = fieldNames.zip(dataTypes).map{ case (s, dt) =>
-        deSerializeValue(tableProperties.getProperty(s"dse.field.default.$s"), dt)}
-      val wrappers = fieldOIs.zip(dataTypes).map { case (f, dt) => wrapperFor(f, dt)}
-      val outputData = new Array[Any](fieldOIs.length)
-
-      writerContainer.executorSideSetup(context.stageId, context.partitionId, context.attemptNumber)
-
-      iterator.foreach { row =>
-        var i = 0
-        while (i < fieldOIs.length) {
-          outputData(i) = if (row.isNullAt(i)) {
-            if (storeDefaults) fieldDefaultValues(i) else null
-          } else {
-            wrappers(i)(row.get(i, dataTypes(i)))
-          }
-          i += 1
-        }
-
-        writerContainer
-          .getLocalFileWriter(row, table.schema)
-          .write(serializer.serialize(outputData, standardOI))
-      }
-
-      writerContainer.close()
-    }
-  }
 
   /**
    * Inserts all the rows in the table into Hive.  Row objects are properly serialized with the
@@ -260,7 +190,15 @@ case class InsertIntoHiveTable(
     val writerContainer = new SparkHiveWriterContainer(
       jobConf, fileSinkConf, franklinTblName, partitionColumnNames, partition)
 
-    saveAsHiveFile(child.execute(), outputClass, fileSinkConf, jobConfSer, writerContainer)
+    saveAsHiveFile(
+      sc.sparkContext,
+      child.execute(),
+      table.schema,
+      child.output.map(_.dataType).toArray,
+      outputClass,
+      fileSinkConf,
+      jobConfSer,
+      writerContainer)
 
     if (testing) {
       val outputPath = FileOutputFormat.getOutputPath(jobConf)
@@ -333,8 +271,6 @@ case class InsertIntoHiveTable(
     // TODO: implement hive compatibility as rules.
     Seq.empty[InternalRow]
   }
-
-  override def executeCollect(): Array[InternalRow] = sideEffectResult.toArray
 
   protected override def doExecute(): RDD[InternalRow] = {
     sqlContext.sparkContext.parallelize(sideEffectResult.asInstanceOf[Seq[InternalRow]], 1)
