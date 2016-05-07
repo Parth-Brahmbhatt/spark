@@ -166,8 +166,12 @@ final class DataFrameWriter private[sql](df: DataFrame) {
     insertInto(SqlParser.parseTableIdentifier(tableName))
   }
 
+  // for testing static partitions
+  private[sql] var partitionMap: Option[Map[String, Option[String]]] = None
+
   private def insertInto(tableIdent: TableIdentifier): Unit = {
-    val partitions = normalizedParCols.map(_.map(col => col -> (None: Option[String])).toMap)
+    val partitions = partitionMap.orElse(
+      normalizedParCols.map(_.map(col => col -> (None: Option[String])).toMap))
     val overwrite = mode == SaveMode.Overwrite
 
     // A partitioned relation's schema can be different from the input logicalPlan, since
@@ -195,7 +199,7 @@ final class DataFrameWriter private[sql](df: DataFrame) {
     parCols.map { col =>
       df.logicalPlan.output
         .map(_.name)
-        .find(df.sqlContext.analyzer.resolver(_, col))
+        .find(df.sqlContext.analyzer.resolver(_, col)).orElse(partitionMap.get(col))
         .getOrElse(throw new AnalysisException(s"Partition column $col not found in existing " +
           s"columns (${df.logicalPlan.output.map(_.name).mkString(", ")})"))
     }
@@ -389,4 +393,5 @@ final class DataFrameWriter private[sql](df: DataFrame) {
 
   private var partitioningColumns: Option[Seq[String]] = None
 
+  private var staticPartitionValues: Option[Seq[String]] = None
 }

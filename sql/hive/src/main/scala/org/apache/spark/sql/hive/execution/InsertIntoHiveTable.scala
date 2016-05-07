@@ -258,7 +258,7 @@ case class InsertIntoHiveTable(
     }
 
     val writerContainer = new SparkHiveWriterContainer(
-      jobConf, fileSinkConf, franklinTblName, partitionColumnNames)
+      jobConf, fileSinkConf, franklinTblName, partitionColumnNames, partition)
 
     saveAsHiveFile(child.execute(), outputClass, fileSinkConf, jobConfSer, writerContainer)
 

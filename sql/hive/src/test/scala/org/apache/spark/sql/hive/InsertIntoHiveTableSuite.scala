@@ -345,6 +345,32 @@ class InsertIntoHiveTableSuite extends QueryTest with TestHiveSingleton with Bef
     }
   }
 
+  test("Insert into static partition name") {
+    withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
+      hiveContext.hiveconf.set("hive.exec.dynamic.partition.mode", "nonstrict")
+      sql("CREATE TABLE source (id bigint, part string)")
+      sql("CREATE TABLE partitioned (id bigint, data string) " +
+          "PARTITIONED BY (static string, part string)")
+
+      val expected = (1 to 10).map(i => (i, s"data-$i", if ((i % 2) == 0) "even" else "odd"))
+          .toDF("id", "data", "part")
+      val data = expected.select("id", "part")
+
+      data.write.insertInto("source")
+      checkAnswer(sql("SELECT * FROM source"), data.collect().toSeq)
+
+      // should be able to insert an expression using AS when mapping columns by name
+      val writer = sqlContext.table("source")
+          .selectExpr("id", "part", "CONCAT('data-', id) as data")
+          .write.byName
+      writer.partitionMap = Some(Map("static" -> Some("spark"), "part" -> None))
+      writer.insertInto("partitioned")
+      checkAnswer(
+        sql("SELECT id, data, part FROM partitioned WHERE static = 'spark'"),
+        expected.collect().toSeq)
+    }
+  }
+
   test("Reject missing columns") {
     withSQLConf(("hive.exec.dynamic.partition.mode", "nonstrict")) {
       hiveContext.hiveconf.set("hive.exec.dynamic.partition.mode", "nonstrict")
