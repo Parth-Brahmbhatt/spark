@@ -374,6 +374,16 @@ case class InsertIntoTable(
   }
 }
 
+case class InsertIntoDir(
+    path: String,
+    overwrite: Boolean,
+    isLocal: Boolean,
+    child: LogicalPlan)
+  extends LogicalPlan {
+  override def children: Seq[LogicalPlan] = child :: Nil
+  override def output: Seq[Attribute] = Seq.empty
+}
+
 /**
  * A container for holding named common table expressions (CTEs) and a query plan.
  * This operator will be removed during analysis and the relations will be substituted into child.

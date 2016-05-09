@@ -199,20 +199,29 @@ class AstBuilder extends SqlBaseBaseVisitor[AnyRef] with Logging {
   }
 
   /**
-   * Add an INSERT INTO [TABLE]/INSERT OVERWRITE TABLE operation to the logical plan.
+   * Add an INSERT INTO [TABLE] / INSERT OVERWRITE TABLE / INSERT OVERWRITE DIRECTORY
+   * operation to the logical plan.
    */
   private def withInsertInto(
       ctx: InsertIntoContext,
       query: LogicalPlan): LogicalPlan = withOrigin(ctx) {
-    val tableIdent = visitTableIdentifier(ctx.tableIdentifier)
+    val tableIdent = Option(ctx.tableIdentifier)
+      .map(ti => Option(visitTableIdentifier(ti))).getOrElse(None)
     val partitionKeys = Option(ctx.partitionSpec).map(visitPartitionSpec).getOrElse(Map.empty)
 
-    InsertIntoTable(
-      UnresolvedRelation(tableIdent, None),
+    tableIdent.map(ti => InsertIntoTable(
+      UnresolvedRelation(ti, None),
       partitionKeys,
       query,
       ctx.OVERWRITE != null,
-      ctx.EXISTS != null)
+      ctx.EXISTS != null)).getOrElse(
+      InsertIntoDir(
+        string(ctx.path),
+        ctx.OVERWRITE != null,
+        ctx.LOCAL != null,
+        query)
+    )
+
   }
 
   /**
