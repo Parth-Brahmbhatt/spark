@@ -23,7 +23,7 @@ import java.util.Properties
 import scala.language.existentials
 
 import antlr.SemanticException
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.hadoop.hive.ql.io.{HiveIgnoreKeyTextOutputFormat, RCFileOutputFormat}
 import org.apache.hadoop.hive.ql.io.orc.{OrcOutputFormat, OrcSerde}
 import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
@@ -107,13 +107,16 @@ case class InsertIntoDir(
 
     writerContainer.driverSideSetup()
 
+    if( !isLocal ) {
+        FileSystem.get(jobConf).delete(new Path(path), true)
+    }
+
     @transient val outputClass = writerContainer.newSerializer(tableDesc).getSerializedClass
     saveAsHiveFile(child.execute(), outputClass, fileSinkConf, jobConfSer, writerContainer,
       isCompressed)
 
     val outputPath = FileOutputFormat.getOutputPath(jobConf)
-
-    if(isLocal) {
+    if( isLocal ) {
       // TODO What if the driver is running in YARN mode, how do we copy to actual Client node?
 
       Utils.deleteRecursively(new File(path))
