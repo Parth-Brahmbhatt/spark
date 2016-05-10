@@ -331,31 +331,6 @@ class SparkSqlAstBuilder(conf: SQLConf) extends AstBuilder {
   }
 
   /**
-   * Convert a table property list into a key-value map.
-   */
-  override def visitTablePropertyList(
-      ctx: TablePropertyListContext): Map[String, String] = withOrigin(ctx) {
-    ctx.tableProperty.asScala.map { property =>
-      val key = visitTablePropertyKey(property.key)
-      val value = Option(property.value).map(string).orNull
-      key -> value
-    }.toMap
-  }
-
-  /**
-   * A table property key can either be String or a collection of dot separated elements. This
-   * function extracts the property key based on whether its a string literal or a table property
-   * identifier.
-   */
-  override def visitTablePropertyKey(key: TablePropertyKeyContext): String = {
-    if (key.STRING != null) {
-      string(key.STRING)
-    } else {
-      key.getText
-    }
-  }
-
-  /**
    * Create a [[CreateDatabase]] command.
    *
    * For example:
@@ -834,9 +809,6 @@ class SparkSqlAstBuilder(conf: SQLConf) extends AstBuilder {
     }
   }
 
-  /** Empty storage format for default values and copies. */
-  private val EmptyStorageFormat = CatalogStorageFormat(None, None, None, None, false, Map.empty)
-
   /**
    * Create a [[CatalogStorageFormat]].
    */
@@ -864,70 +836,6 @@ class SparkSqlAstBuilder(conf: SQLConf) extends AstBuilder {
       case None =>
         throw operationNotAllowed(s"STORED AS with file format '$source'", ctx)
     }
-  }
-
-  /**
-   * Create a [[CatalogStorageFormat]] used for creating tables.
-   *
-   * Example format:
-   * {{{
-   *   SERDE serde_name [WITH SERDEPROPERTIES (k1=v1, k2=v2, ...)]
-   * }}}
-   *
-   * OR
-   *
-   * {{{
-   *   DELIMITED [FIELDS TERMINATED BY char [ESCAPED BY char]]
-   *   [COLLECTION ITEMS TERMINATED BY char]
-   *   [MAP KEYS TERMINATED BY char]
-   *   [LINES TERMINATED BY char]
-   *   [NULL DEFINED AS char]
-   * }}}
-   */
-  private def visitRowFormat(ctx: RowFormatContext): CatalogStorageFormat = withOrigin(ctx) {
-    ctx match {
-      case serde: RowFormatSerdeContext => visitRowFormatSerde(serde)
-      case delimited: RowFormatDelimitedContext => visitRowFormatDelimited(delimited)
-    }
-  }
-
-  /**
-   * Create SERDE row format name and properties pair.
-   */
-  override def visitRowFormatSerde(
-      ctx: RowFormatSerdeContext): CatalogStorageFormat = withOrigin(ctx) {
-    import ctx._
-    EmptyStorageFormat.copy(
-      serde = Option(string(name)),
-      serdeProperties = Option(tablePropertyList).map(visitTablePropertyList).getOrElse(Map.empty))
-  }
-
-  /**
-   * Create a delimited row format properties object.
-   */
-  override def visitRowFormatDelimited(
-      ctx: RowFormatDelimitedContext): CatalogStorageFormat = withOrigin(ctx) {
-    // Collect the entries if any.
-    def entry(key: String, value: Token): Seq[(String, String)] = {
-      Option(value).toSeq.map(x => key -> string(x))
-    }
-    // TODO we need proper support for the NULL format.
-    val entries =
-      entry("field.delim", ctx.fieldsTerminatedBy) ++
-        entry("serialization.format", ctx.fieldsTerminatedBy) ++
-        entry("escape.delim", ctx.escapedBy) ++
-        // The following typo is inherited from Hive...
-        entry("colelction.delim", ctx.collectionItemsTerminatedBy) ++
-        entry("mapkey.delim", ctx.keysTerminatedBy) ++
-        Option(ctx.linesSeparatedBy).toSeq.map { token =>
-          val value = string(token)
-          assert(
-            value == "\n",
-            s"LINES TERMINATED BY only supports newline '\\n' right now: $value",
-            ctx)
-          "line.delim" -> value
-        }
-    EmptyStorageFormat.copy(serdeProperties = entries.toMap)
   }
 
   /**

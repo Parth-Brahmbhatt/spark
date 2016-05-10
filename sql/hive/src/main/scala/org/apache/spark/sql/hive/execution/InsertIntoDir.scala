@@ -17,6 +17,7 @@
 
 package org.apache.spark.sql.hive.execution
 
+import java.io.File
 import java.util.Properties
 
 import scala.language.existentials
@@ -34,18 +35,19 @@ import org.apache.hadoop.io.Text
 import org.apache.hadoop.mapred.{FileOutputFormat, JobConf, SequenceFileOutputFormat, TextInputFormat}
 
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.catalyst.catalog.CatalogStorageFormat
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.hive._
 import org.apache.spark.sql.hive.HiveShim.{ShimFileSinkDesc => FileSinkDesc}
-import org.apache.spark.util.SerializableJobConf
+import org.apache.spark.util.{SerializableJobConf, Utils}
 
 case class InsertIntoDir(
     path: String,
     isLocal: Boolean,
-    overwrite: Boolean,
     fileFormat: String,
+    rowFormat: CatalogStorageFormat,
     child: SparkPlan) extends SaveAsHiveFile {
 
   @transient private val sessionState = sqlContext.sessionState.asInstanceOf[HiveSessionState]
@@ -68,16 +70,22 @@ case class InsertIntoDir(
     val fileFormatMap = Map(
       "orc" -> (classOf[OrcOutputFormat], classOf[OrcSerde]),
       "parquet" -> (classOf[MapredParquetOutputFormat], classOf[ParquetHiveSerDe]),
-      "rcfile" -> (classOf[RCFileOutputFormat], classOf[LazySimpleSerDe]),
+//      "rcfile" -> (classOf[RCFileOutputFormat], classOf[LazySimpleSerDe]),
       "textfile" -> (classOf[HiveIgnoreKeyTextOutputFormat[Text, Text]], classOf[LazySimpleSerDe]),
       "sequencefile" -> (classOf[SequenceFileOutputFormat[Any, Any]], classOf[LazySimpleSerDe])
     )
 
     val (ouputFormatClass, serdeClass) = fileFormatMap.getOrElse(fileFormat.toLowerCase,
-      throw new SemanticException(s"Unrecognized file format in STORED AS clause: ${fileFormat}," +
+      throw new SemanticException(s"Unrecognized file format in STORED AS clause: $fileFormat," +
         s" expected one of ${fileFormatMap.keys.mkString(",")}"))
 
     properties.put(serdeConstants.SERIALIZATION_LIB, serdeClass.getName)
+    import scala.collection.JavaConverters._
+    properties.putAll(rowFormat.serdeProperties.asJava)
+
+    // if user specified a serde in the ROW FORMAT, use that.
+    rowFormat.serde.map(properties.put(serdeConstants.SERIALIZATION_LIB, _))
+
     val tableDesc = new TableDesc(
       classOf[TextInputFormat],
       ouputFormatClass,
@@ -106,8 +114,9 @@ case class InsertIntoDir(
     val outputPath = FileOutputFormat.getOutputPath(jobConf)
 
     if(isLocal) {
-      // TODO What if the driver is running in YARN mode, how do we copy to Client node?
-      // TODO We need to delete the original directories before copying the new content.
+      // TODO What if the driver is running in YARN mode, how do we copy to actual Client node?
+
+      Utils.deleteRecursively(new File(path))
       outputPath.getFileSystem(hadoopConf).copyToLocalFile(true, outputPath, new Path(path))
       log.info(s"Copying results from ${outputPath} to local dir ${path}")
     } else {

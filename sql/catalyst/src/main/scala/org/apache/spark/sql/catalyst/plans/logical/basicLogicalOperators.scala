@@ -20,6 +20,7 @@ package org.apache.spark.sql.catalyst.plans.logical
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.catalyst.analysis.MultiInstanceRelation
+import org.apache.spark.sql.catalyst.catalog.CatalogStorageFormat
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans._
@@ -376,9 +377,9 @@ case class InsertIntoTable(
 
 case class InsertIntoDir(
     path: String,
-    overwrite: Boolean,
     isLocal: Boolean,
-    format: String,
+    fileFormat: String,
+    rowFormat: CatalogStorageFormat,
     child: LogicalPlan)
   extends LogicalPlan {
   override def children: Seq[LogicalPlan] = child :: Nil
