@@ -51,9 +51,9 @@ private[hive] trait HiveStrategies {
         execution.InsertIntoHiveTable(
           table, partition, planLater(child), overwrite, ifNotExists) :: Nil
         case logical.InsertIntoDir(
-          path, overwrite, isLocal, child) =>
+          path, overwrite, isLocal, fileFormat, child) =>
           execution.InsertIntoDir(
-            path, isLocal, overwrite, planLater(child)) :: Nil
+            path, isLocal, overwrite, fileFormat, planLater(child)) :: Nil
       case _ => Nil
     }
   }

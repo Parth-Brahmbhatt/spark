@@ -19,13 +19,19 @@ package org.apache.spark.sql.hive.execution
 
 import java.util.Properties
 
-import org.apache.hadoop.fs.{FileSystem, Path}
-import org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+import scala.language.existentials
+
+import antlr.SemanticException
+import org.apache.hadoop.fs.Path
+import org.apache.hadoop.hive.ql.io.{HiveIgnoreKeyTextOutputFormat, RCFileOutputFormat}
+import org.apache.hadoop.hive.ql.io.orc.{OrcOutputFormat, OrcSerde}
+import org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+import org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
 import org.apache.hadoop.hive.ql.plan.TableDesc
 import org.apache.hadoop.hive.serde.serdeConstants
 import org.apache.hadoop.hive.serde2.`lazy`.LazySimpleSerDe
 import org.apache.hadoop.io.Text
-import org.apache.hadoop.mapred.{FileOutputFormat, JobConf, TextInputFormat}
+import org.apache.hadoop.mapred.{FileOutputFormat, JobConf, SequenceFileOutputFormat, TextInputFormat}
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
@@ -35,11 +41,11 @@ import org.apache.spark.sql.hive._
 import org.apache.spark.sql.hive.HiveShim.{ShimFileSinkDesc => FileSinkDesc}
 import org.apache.spark.util.SerializableJobConf
 
-
 case class InsertIntoDir(
     path: String,
     isLocal: Boolean,
     overwrite: Boolean,
+    fileFormat: String,
     child: SparkPlan) extends SaveAsHiveFile {
 
   @transient private val sessionState = sqlContext.sessionState.asInstanceOf[HiveSessionState]
@@ -49,7 +55,6 @@ case class InsertIntoDir(
     val hadoopConf = sessionState.newHadoopConf()
 
     val properties = new Properties()
-    properties.put(serdeConstants.SERIALIZATION_LIB, classOf[LazySimpleSerDe].getName)
 
     val Array(cols, types) = child.output.foldLeft(Array("", ""))((r, a) => {
       r(0) = r(0) + a.name + ","
@@ -60,14 +65,27 @@ case class InsertIntoDir(
     properties.put("columns", cols.dropRight(1))
     properties.put("columns.types", types.dropRight(1))
 
-    val isCompressed =
-      sessionState.conf.getConfString("hive.exec.compress.output", "false").toBoolean
+    val fileFormatMap = Map(
+      "orc" -> (classOf[OrcOutputFormat], classOf[OrcSerde]),
+      "parquet" -> (classOf[MapredParquetOutputFormat], classOf[ParquetHiveSerDe]),
+      "rcfile" -> (classOf[RCFileOutputFormat], classOf[LazySimpleSerDe]),
+      "textfile" -> (classOf[HiveIgnoreKeyTextOutputFormat[Text, Text]], classOf[LazySimpleSerDe]),
+      "sequencefile" -> (classOf[SequenceFileOutputFormat[Any, Any]], classOf[LazySimpleSerDe])
+    )
 
+    val (ouputFormatClass, serdeClass) = fileFormatMap.getOrElse(fileFormat.toLowerCase,
+      throw new SemanticException(s"Unrecognized file format in STORED AS clause: ${fileFormat}," +
+        s" expected one of ${fileFormatMap.keys.mkString(",")}"))
+
+    properties.put(serdeConstants.SERIALIZATION_LIB, serdeClass.getName)
     val tableDesc = new TableDesc(
       classOf[TextInputFormat],
-      classOf[HiveIgnoreKeyTextOutputFormat[Text, Text]],
+      ouputFormatClass,
       properties
     )
+
+    val isCompressed =
+      sessionState.conf.getConfString("hive.exec.compress.output", "false").toBoolean
 
     val fileSinkConf = new FileSinkDesc(path, tableDesc, isCompressed)
 
@@ -88,10 +106,12 @@ case class InsertIntoDir(
     val outputPath = FileOutputFormat.getOutputPath(jobConf)
 
     if(isLocal) {
+      // TODO What if the driver is running in YARN mode, how do we copy to Client node?
+      // TODO We need to delete the original directories before copying the new content.
       outputPath.getFileSystem(hadoopConf).copyToLocalFile(true, outputPath, new Path(path))
-      log.info(s"Results copied to local dir ${path}")
+      log.info(s"Copying results from ${outputPath} to local dir ${path}")
     } else {
-      log.info(s"Results copied to path ${outputPath}")
+      log.info(s"Results available at path ${outputPath}")
     }
 
     Seq.empty[InternalRow]

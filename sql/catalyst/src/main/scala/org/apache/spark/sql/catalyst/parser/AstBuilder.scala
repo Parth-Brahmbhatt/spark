@@ -219,6 +219,7 @@ class AstBuilder extends SqlBaseBaseVisitor[AnyRef] with Logging {
         string(ctx.path),
         ctx.OVERWRITE != null,
         ctx.LOCAL != null,
+        Option(ctx.format.getText).getOrElse("textfile"),
         query)
     )
 

@@ -198,7 +198,7 @@ query
 insertInto
     : INSERT OVERWRITE TABLE tableIdentifier partitionSpec? (IF NOT EXISTS)?
     | INSERT INTO TABLE? tableIdentifier partitionSpec?
-    | INSERT OVERWRITE LOCAL? DIRECTORY path=STRING
+    | INSERT OVERWRITE LOCAL? DIRECTORY path=STRING (STORED AS format=IDENTIFIER)?
     ;
 
 partitionSpecLocation
