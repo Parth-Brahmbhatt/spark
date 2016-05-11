@@ -95,7 +95,9 @@ case class InsertIntoDir(
     val isCompressed =
       sessionState.conf.getConfString("hive.exec.compress.output", "false").toBoolean
 
-    val fileSinkConf = new FileSinkDesc(path, tableDesc, isCompressed)
+    val targetPath = new Path(path)
+
+    val fileSinkConf = new FileSinkDesc(targetPath.toString, tableDesc, isCompressed)
 
     val jobConf = new JobConf(hadoopConf)
     val jobConfSer = new SerializableJobConf(jobConf)
@@ -105,10 +107,14 @@ case class InsertIntoDir(
         fileSinkConf,
         child.output)
 
+    FileOutputFormat.setOutputPath(
+      jobConf,
+      SparkHiveWriterContainer.createPathFromString(fileSinkConf.getDirName(), jobConf))
+
     writerContainer.driverSideSetup()
 
     if( !isLocal ) {
-        FileSystem.get(jobConf).delete(new Path(path), true)
+        FileSystem.get(jobConf).delete(targetPath, true)
     }
 
     @transient val outputClass = writerContainer.newSerializer(tableDesc).getSerializedClass
@@ -117,11 +123,9 @@ case class InsertIntoDir(
 
     val outputPath = FileOutputFormat.getOutputPath(jobConf)
     if( isLocal ) {
-      // TODO What if the driver is running in YARN mode, how do we copy to actual Client node?
-
       Utils.deleteRecursively(new File(path))
-      outputPath.getFileSystem(hadoopConf).copyToLocalFile(true, outputPath, new Path(path))
-      log.info(s"Copying results from ${outputPath} to local dir ${path}")
+      outputPath.getFileSystem(hadoopConf).copyToLocalFile(true, outputPath, targetPath)
+      log.info(s"Copied results from ${outputPath} to local dir ${path}")
     } else {
       log.info(s"Results available at path ${outputPath}")
     }
