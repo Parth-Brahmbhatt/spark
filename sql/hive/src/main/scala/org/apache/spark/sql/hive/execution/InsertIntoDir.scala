@@ -100,18 +100,14 @@ case class InsertIntoDir(
     val fileSinkConf = new FileSinkDesc(targetPath.toString, tableDesc, isCompressed)
 
     val jobConf = new JobConf(hadoopConf)
+    jobConf.set("mapreduce.fileoutputcommitter.marksuccessfuljobs", "false")
+
     val jobConfSer = new SerializableJobConf(jobConf)
 
     val writerContainer = new SparkHiveWriterContainer(
         jobConf,
         fileSinkConf,
         child.output)
-
-    FileOutputFormat.setOutputPath(
-      jobConf,
-      SparkHiveWriterContainer.createPathFromString(fileSinkConf.getDirName(), jobConf))
-
-    writerContainer.driverSideSetup()
 
     if( !isLocal ) {
         FileSystem.get(jobConf).delete(targetPath, true)
