@@ -383,8 +383,10 @@ private[spark] class ApplicationMaster(
           }
           try {
             val numPendingAllocate = allocator.getPendingAllocate.size
+            var sleepStart = 0L
+            var sleepInterval = 200L // ms
             allocatorLock.synchronized {
-              val sleepInterval =
+              sleepInterval =
                 if (numPendingAllocate > 0 || allocator.getNumPendingLossReasonRequests > 0) {
                   val currentAllocationInterval =
                     math.min(heartbeatInterval, nextAllocationInterval)
@@ -394,9 +396,22 @@ private[spark] class ApplicationMaster(
                   nextAllocationInterval = initialAllocationInterval
                   heartbeatInterval
                 }
-              logDebug(s"Number of pending allocations is $numPendingAllocate. " +
-                       s"Sleeping for $sleepInterval.")
+              sleepStart = System.currentTimeMillis()
               allocatorLock.wait(sleepInterval)
+            }
+            val sleepDuration = System.currentTimeMillis() - sleepStart
+            if (sleepDuration < sleepInterval - 5) {
+              // log when sleep is interrupted
+              logInfo(s"Number of pending allocations is $numPendingAllocate. " +
+                  s"Slept for $sleepDuration/$sleepInterval.")
+              val toSleep = math.max(0, initialAllocationInterval - sleepDuration)
+              if (toSleep > 0) {
+                logInfo(s"Going back to sleep for $toSleep ms")
+                Thread.sleep(toSleep)
+              }
+            } else {
+              logDebug(s"Number of pending allocations is $numPendingAllocate. " +
+                  s"Slept for $sleepDuration/$sleepInterval.")
             }
           } catch {
             case e: InterruptedException =>
