@@ -69,7 +69,7 @@ class HadoopTableReader(
   private val _minSplitsPerRDD = if (sc.sparkContext.isLocal) {
     0 // will splitted based on block by default.
   } else {
-    math.max(sc.hiveconf.getInt("mapred.map.tasks", 1), sc.sparkContext.defaultMinPartitions)
+    1
   }
 
   // TODO: set aws s3 credentials.
