@@ -56,6 +56,7 @@ if [ "$(echo $CURRENT_JOB_WORKING_DIR|perl -F/ -ane 'print "$F[3]\n";')" == "gen
 fi
 
 exec $SPARK_HOME/bin/$1 \
+    ${SPARK_CONFIG_OPTS:-} \
     --conf spark.yarn.historyServer.address=$MASTER_NODE_ADDR:18080 $APPEND_GENIE_ID  \
     --jars $JARS_TO_SHIP \
     --driver-class-path $SPARK_DRIVER_CLASSPATH \

@@ -45,6 +45,7 @@ if [ "$(echo $CURRENT_JOB_WORKING_DIR|perl -F/ -ane 'print "$F[3]\n";')" == "gen
 fi
 
 exec $SPARK_HOME/bin/spark-submit \
+    ${SPARK_CONFIG_OPTS:-} \
     --conf spark.yarn.historyServer.address=$MASTER_NODE_ADDR:18080 $APPEND_GENIE_ID  \
     --conf spark.s3.use.instance.credentials=true \
     --jars $JARS_TO_SHIP \
