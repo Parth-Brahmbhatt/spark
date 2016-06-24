@@ -19,10 +19,12 @@ package org.apache.spark.io
 
 import java.io.{IOException, InputStream, OutputStream}
 
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.io.compress.BrotliCodec
+
 import com.ning.compress.lzf.{LZFInputStream, LZFOutputStream}
 import net.jpountz.lz4.{LZ4BlockInputStream, LZ4BlockOutputStream}
 import org.xerial.snappy.{Snappy, SnappyInputStream, SnappyOutputStream}
-
 import org.apache.spark.SparkConf
 import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.util.Utils
@@ -55,7 +57,8 @@ private[spark] object CompressionCodec {
   private val shortCompressionCodecNames = Map(
     "lz4" -> classOf[LZ4CompressionCodec].getName,
     "lzf" -> classOf[LZFCompressionCodec].getName,
-    "snappy" -> classOf[SnappyCompressionCodec].getName)
+    "snappy" -> classOf[SnappyCompressionCodec].getName,
+    "brotli" -> classOf[BrotliCompressionCodec].getName)
 
   def getCodecName(conf: SparkConf): String = {
     conf.get(configKey, DEFAULT_COMPRESSION_CODEC)
@@ -135,6 +138,29 @@ class LZFCompressionCodec(conf: SparkConf) extends CompressionCodec {
   }
 
   override def compressedInputStream(s: InputStream): InputStream = new LZFInputStream(s)
+}
+
+
+/**
+ * :: DeveloperApi ::
+ */
+@DeveloperApi
+class BrotliCompressionCodec(conf: SparkConf) extends CompressionCodec {
+  val hadoopConf = new Configuration(false /* empty conf */)
+  conf.getOption("spark.compression.brotli.quality").foreach { quality =>
+    hadoopConf.set(BrotliCodec.QUALITY_LEVEL_PROP, quality)
+  }
+
+  val codec = new BrotliCodec
+  codec.setConf(hadoopConf)
+
+  override def compressedOutputStream(s: OutputStream): OutputStream = {
+    codec.createOutputStream(s)
+  }
+
+  override def compressedInputStream(s: InputStream): InputStream = {
+    codec.createInputStream(s)
+  }
 }
 
 
