@@ -20,7 +20,7 @@ package org.apache.spark.io
 import java.io.{IOException, InputStream, OutputStream}
 
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.io.compress.BrotliCodec
+import org.apache.hadoop.io.compress.{BrotliCodec, CompressorStream, DecompressorStream}
 
 import com.ning.compress.lzf.{LZFInputStream, LZFOutputStream}
 import net.jpountz.lz4.{LZ4BlockInputStream, LZ4BlockOutputStream}
@@ -154,12 +154,28 @@ class BrotliCompressionCodec(conf: SparkConf) extends CompressionCodec {
   val codec = new BrotliCodec
   codec.setConf(hadoopConf)
 
+  class BrotliCompressorStream(wrapped: OutputStream)
+      extends CompressorStream(wrapped, codec.createCompressor()) {
+    override def close(): Unit = {
+      super.close()
+      compressor.end()
+    }
+  }
+
+  class BrotliDecompressorStream(wrapped: InputStream)
+      extends DecompressorStream(wrapped, codec.createDecompressor()) {
+    override def close(): Unit = {
+      super.close()
+      decompressor.end()
+    }
+  }
+
   override def compressedOutputStream(s: OutputStream): OutputStream = {
-    codec.createOutputStream(s)
+    new BrotliCompressorStream(s)
   }
 
   override def compressedInputStream(s: InputStream): InputStream = {
-    codec.createInputStream(s)
+    new BrotliDecompressorStream(s)
   }
 }
 
