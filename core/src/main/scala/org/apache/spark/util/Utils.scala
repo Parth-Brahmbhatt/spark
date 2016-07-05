@@ -2211,32 +2211,42 @@ private[spark] object Utils extends Logging {
   }
 
   /**
-   * Return whether dynamic allocation is enabled in the given conf
-   * Dynamic allocation and explicitly setting the number of executors are inherently
-   * incompatible. In environments where dynamic allocation is turned on by default,
-   * the latter should override the former (SPARK-9092).
+   * Return whether dynamic allocation is enabled in the given conf.
    */
   def isDynamicAllocationEnabled(conf: SparkConf): Boolean = {
-    conf.getBoolean("spark.dynamicAllocation.enabled", false) &&
-      (conf.getInt("spark.executor.instances", 0) == 0 ||
-        conf.getBoolean("spark.dynamicAllocation.overrideNumInstances", false))
+    conf.getBoolean("spark.dynamicAllocation.enabled", false)
   }
 
   /**
    * Return the minimum number of executors for dynamic allocation.
-   *
-   * If spark.executor.instances is set and larger than spark.dynamicAllocation.minExecutors, the
-   * it will be returned as the dynamic allocation minimum. This assumes that it was overridden by
-   * spark.dynamicAllocation.overrideNumInstances (or else this method would not be called).
    */
-  def getDynamicAllocationMinExecutors(conf: SparkConf): Int = {
-    math.max(
+  def getDynamicAllocationInitialExecutors(conf: SparkConf): Int = {
+    Seq(
       conf.getInt("spark.dynamicAllocation.minExecutors", 0),
-      conf.getInt("spark.executor.instances", 0))
+      conf.getInt("spark.dynamicAllocation.initialExecutors", 0),
+      conf.getInt("spark.executor.instances", 0)
+    ).max
   }
 
+  /**
+   * Return the minimum number of executors for dynamic allocation.
+   */
+  def getDynamicAllocationMinExecutors(conf: SparkConf): Int = {
+    conf.getInt("spark.dynamicAllocation.minExecutors", 3)
+  }
+
+  /**
+   * Return the maximum number of executors for dynamic allocation.
+   *
+   * If spark.executor.instances is set and larger than spark.dynamicAllocation.maxExecutors, the
+   * it will be returned as the dynamic allocation maximum. This assumes that it was overridden by
+   * spark.dynamicAllocation.overrideNumInstances (or else this method would not be called).
+   */
   def getDynamicAllocationMaxExecutors(conf: SparkConf): Int = {
-    conf.getInt("spark.dynamicAllocation.maxExecutors", Integer.MAX_VALUE)
+    Seq(
+      conf.getInt("spark.dynamicAllocation.maxExecutors", 500),
+      conf.getInt("spark.executor.instances", 0)
+    ).max
   }
 
   def tryWithResource[R <: Closeable, T](createResource: => R)(f: R => T): T = {
