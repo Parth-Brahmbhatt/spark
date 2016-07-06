@@ -22,11 +22,11 @@ import java.util.Comparator;
 import org.apache.spark.memory.MemoryConsumer;
 import org.apache.spark.unsafe.Platform;
 import org.apache.spark.unsafe.array.LongArray;
+import org.apache.spark.unsafe.memory.MemoryBlock;
 import org.apache.spark.util.collection.Sorter;
 
 final class ShuffleInMemorySorter {
 
-  private final Sorter<PackedRecordPointer, LongArray> sorter;
   private static final class SortComparator implements Comparator<PackedRecordPointer> {
     @Override
     public int compare(PackedRecordPointer left, PackedRecordPointer right) {
@@ -41,13 +41,27 @@ final class ShuffleInMemorySorter {
    * An array of record pointers and partition ids that have been encoded by
    * {@link PackedRecordPointer}. The sort operates on this array instead of directly manipulating
    * records.
+   *
+   * Only part of the array will be used to store the pointers, the rest part is preserved as
+   * temporary buffer for sorting.
    */
   private LongArray array;
+
+  /**
+   * Whether to use radix sort for sorting in-memory partition ids. Radix sort is much faster
+   * but requires additional memory to be reserved memory as pointers are added.
+   */
+  private final boolean useRadixSort;
 
   /**
    * The position in the pointer array where new records can be inserted.
    */
   private int pos = 0;
+
+  /**
+   * How many records could be inserted, because part of the array should be left for sorting.
+   */
+  private int usableCapacity = 0;
 
   private int initialSize;
 
@@ -55,8 +69,15 @@ final class ShuffleInMemorySorter {
     this.consumer = consumer;
     assert (initialSize > 0);
     this.initialSize = initialSize;
+    this.useRadixSort = false; // NETFLIX: we didn't backport radixsort patches for simplicity
     this.array = consumer.allocateArray(initialSize);
-    this.sorter = new Sorter<>(ShuffleSortDataFormat.INSTANCE);
+    this.usableCapacity = getUsableCapacity();
+  }
+
+  private int getUsableCapacity() {
+    // Radix sort requires same amount of used memory as buffer, Tim sort requires
+    // half of the used memory as buffer.
+    return (int) (array.size() / (useRadixSort ? 2 : 1.5));
   }
 
   public void free() {
@@ -73,7 +94,8 @@ final class ShuffleInMemorySorter {
   public void reset() {
     if (consumer != null) {
       consumer.freeArray(array);
-      this.array = consumer.allocateArray(initialSize);
+      array = consumer.allocateArray(initialSize);
+      usableCapacity = getUsableCapacity();
     }
     pos = 0;
   }
@@ -85,18 +107,19 @@ final class ShuffleInMemorySorter {
       array.getBaseOffset(),
       newArray.getBaseObject(),
       newArray.getBaseOffset(),
-      array.size() * 8L
+      pos * 8L
     );
     consumer.freeArray(array);
     array = newArray;
+    usableCapacity = getUsableCapacity();
   }
 
   public boolean hasSpaceForAnotherRecord() {
-    return pos < array.size();
+    return pos < usableCapacity;
   }
 
   public long getMemoryUsage() {
-    return array.size() * 8L;
+    return array.size() * 8;
   }
 
   /**
@@ -123,17 +146,18 @@ final class ShuffleInMemorySorter {
   public static final class ShuffleSorterIterator {
 
     private final LongArray pointerArray;
-    private final int numRecords;
+    private final int limit;
     final PackedRecordPointer packedRecordPointer = new PackedRecordPointer();
     private int position = 0;
 
-    public ShuffleSorterIterator(int numRecords, LongArray pointerArray) {
-      this.numRecords = numRecords;
+    ShuffleSorterIterator(int numRecords, LongArray pointerArray, int startingPosition) {
+      this.limit = numRecords + startingPosition;
       this.pointerArray = pointerArray;
+      this.position = startingPosition;
     }
 
     public boolean hasNext() {
-      return position < numRecords;
+      return position < limit;
     }
 
     public void loadNext() {
@@ -146,7 +170,16 @@ final class ShuffleInMemorySorter {
    * Return an iterator over record pointers in sorted order.
    */
   public ShuffleSorterIterator getSortedIterator() {
+    int offset = 0;
+    MemoryBlock unused = new MemoryBlock(
+      array.getBaseObject(),
+      array.getBaseOffset() + pos * 8L,
+      (array.size() - pos) * 8L);
+    LongArray buffer = new LongArray(unused);
+    Sorter<PackedRecordPointer, LongArray> sorter =
+      new Sorter<>(new ShuffleSortDataFormat(buffer));
+
     sorter.sort(array, 0, pos, SORT_COMPARATOR);
-    return new ShuffleSorterIterator(pos, array);
+    return new ShuffleSorterIterator(pos, array, offset);
   }
 }

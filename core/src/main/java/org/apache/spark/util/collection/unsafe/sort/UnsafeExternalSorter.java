@@ -424,7 +424,7 @@ public final class UnsafeExternalSorter extends MemoryConsumer {
 
     public SpillableIterator(UnsafeInMemorySorter.SortedIterator inMemIterator) {
       this.upstream = inMemIterator;
-      this.numRecords = inMemIterator.numRecordsLeft();
+      this.numRecords = inMemIterator.getNumRecords();
     }
 
     public long spill() throws IOException {

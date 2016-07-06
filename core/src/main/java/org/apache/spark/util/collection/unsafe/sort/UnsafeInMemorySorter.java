@@ -19,10 +19,13 @@ package org.apache.spark.util.collection.unsafe.sort;
 
 import java.util.Comparator;
 
+import org.apache.avro.reflect.Nullable;
+
 import org.apache.spark.memory.MemoryConsumer;
 import org.apache.spark.memory.TaskMemoryManager;
 import org.apache.spark.unsafe.Platform;
 import org.apache.spark.unsafe.array.LongArray;
+import org.apache.spark.unsafe.memory.MemoryBlock;
 import org.apache.spark.util.collection.Sorter;
 
 /**
@@ -66,12 +69,15 @@ public final class UnsafeInMemorySorter {
 
   private final MemoryConsumer consumer;
   private final TaskMemoryManager memoryManager;
-  private final Sorter<RecordPointerAndKeyPrefix, LongArray> sorter;
+  @Nullable
   private final Comparator<RecordPointerAndKeyPrefix> sortComparator;
 
   /**
    * Within this buffer, position {@code 2 * i} holds a pointer pointer to the record at
    * index {@code i}, while position {@code 2 * i + 1} in the array holds an 8-byte key prefix.
+   *
+   * Only part of the array will be used to store the pointers, the rest part is preserved as
+   * temporary buffer for sorting.
    */
   private LongArray array;
 
@@ -80,7 +86,14 @@ public final class UnsafeInMemorySorter {
    */
   private int pos = 0;
 
+  /**
+   * How many records could be inserted, because part of the array should be left for sorting.
+   */
+  private int usableCapacity = 0;
+
   private long initialSize;
+
+  private long totalSortTimeNanos = 0L;
 
   public UnsafeInMemorySorter(
     final MemoryConsumer consumer,
@@ -89,7 +102,7 @@ public final class UnsafeInMemorySorter {
     final PrefixComparator prefixComparator,
     int initialSize) {
     this(consumer, memoryManager, recordComparator, prefixComparator,
-      consumer.allocateArray(initialSize * 2));
+      consumer.allocateArray(initialSize * 2), false); //NETFLIX: didn't backport radix sort patches for simplicity
   }
 
   public UnsafeInMemorySorter(
@@ -97,13 +110,24 @@ public final class UnsafeInMemorySorter {
       final TaskMemoryManager memoryManager,
       final RecordComparator recordComparator,
       final PrefixComparator prefixComparator,
-      LongArray array) {
+      LongArray array,
+      boolean canUseRadixSort) {
     this.consumer = consumer;
     this.memoryManager = memoryManager;
     this.initialSize = array.size();
-    this.sorter = new Sorter<>(UnsafeSortDataFormat.INSTANCE);
-    this.sortComparator = new SortComparator(recordComparator, prefixComparator, memoryManager);
+    if (recordComparator != null) {
+      this.sortComparator = new SortComparator(recordComparator, prefixComparator, memoryManager);
+    } else {
+      this.sortComparator = null;
+    }
     this.array = array;
+    this.usableCapacity = getUsableCapacity();
+  }
+
+  private int getUsableCapacity() {
+    // Radix sort requires same amount of used memory as buffer, Tim sort requires
+    // half of the used memory as buffer.
+    return (int) (array.size() / 1.5);
   }
 
   /**
@@ -119,7 +143,8 @@ public final class UnsafeInMemorySorter {
   public void reset() {
     if (consumer != null) {
       consumer.freeArray(array);
-      this.array = consumer.allocateArray(initialSize);
+      array = consumer.allocateArray(initialSize);
+      usableCapacity = getUsableCapacity();
     }
     pos = 0;
   }
@@ -131,12 +156,19 @@ public final class UnsafeInMemorySorter {
     return pos / 2;
   }
 
+  /**
+   * @return the total amount of time spent sorting data (in-memory only).
+   */
+  public long getSortTimeNanos() {
+    return totalSortTimeNanos;
+  }
+
   public long getMemoryUsage() {
-    return array.size() * 8L;
+    return array.size() * 8;
   }
 
   public boolean hasSpaceForAnotherRecord() {
-    return pos + 2 <= array.size();
+    return pos + 1 < usableCapacity;
   }
 
   public void expandPointerArray(LongArray newArray) {
@@ -148,9 +180,10 @@ public final class UnsafeInMemorySorter {
       array.getBaseOffset(),
       newArray.getBaseObject(),
       newArray.getBaseOffset(),
-      array.size() * 8L);
+      pos * 8L);
     consumer.freeArray(array);
     array = newArray;
+    usableCapacity = getUsableCapacity();
   }
 
   /**
@@ -170,22 +203,24 @@ public final class UnsafeInMemorySorter {
     pos++;
   }
 
-  public final class SortedIterator extends UnsafeSorterIterator {
+  public final class SortedIterator extends UnsafeSorterIterator implements Cloneable {
 
     private final int numRecords;
     private int position;
+    private int offset;
     private Object baseObject;
     private long baseOffset;
     private long keyPrefix;
     private int recordLength;
 
-    private SortedIterator(int numRecords) {
+    private SortedIterator(int numRecords, int offset) {
       this.numRecords = numRecords;
       this.position = 0;
+      this.offset = offset;
     }
 
-    public SortedIterator clone () {
-      SortedIterator iter = new SortedIterator(numRecords);
+    public SortedIterator clone() {
+      SortedIterator iter = new SortedIterator(numRecords, offset);
       iter.position = position;
       iter.baseObject = baseObject;
       iter.baseOffset = baseOffset;
@@ -194,23 +229,23 @@ public final class UnsafeInMemorySorter {
       return iter;
     }
 
+    public int getNumRecords() {
+      return numRecords;
+    }
+
     @Override
     public boolean hasNext() {
       return position / 2 < numRecords;
     }
 
-    public int numRecordsLeft() {
-      return numRecords - position / 2;
-    }
-
     @Override
     public void loadNext() {
       // This pointer points to a 4-byte record length, followed by the record's bytes
-      final long recordPointer = array.get(position);
+      final long recordPointer = array.get(offset + position);
       baseObject = memoryManager.getPage(recordPointer);
       baseOffset = memoryManager.getOffsetInPage(recordPointer) + 4;  // Skip over record length
       recordLength = Platform.getInt(baseObject, baseOffset - 4);
-      keyPrefix = array.get(position + 1);
+      keyPrefix = array.get(offset + position + 1);
       position += 2;
     }
 
@@ -232,7 +267,19 @@ public final class UnsafeInMemorySorter {
    * {@code next()} will return the same mutable object.
    */
   public SortedIterator getSortedIterator() {
-    sorter.sort(array, 0, pos / 2, sortComparator);
-    return new SortedIterator(pos / 2);
+    int offset = 0;
+    long start = System.nanoTime();
+    if (sortComparator != null) {
+        MemoryBlock unused = new MemoryBlock(
+          array.getBaseObject(),
+          array.getBaseOffset() + pos * 8L,
+          (array.size() - pos) * 8L);
+        LongArray buffer = new LongArray(unused);
+        Sorter<RecordPointerAndKeyPrefix, LongArray> sorter =
+          new Sorter<>(new UnsafeSortDataFormat(buffer));
+        sorter.sort(array, 0, pos / 2, sortComparator);
+    }
+    totalSortTimeNanos += System.nanoTime() - start;
+    return new SortedIterator(pos / 2, offset);
   }
 }
