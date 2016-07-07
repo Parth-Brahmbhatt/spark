@@ -28,9 +28,9 @@ import org.apache.avro.{Schema, SchemaNormalization}
 import org.apache.avro.generic.{GenericData, GenericRecord}
 import org.apache.avro.io._
 import org.apache.commons.io.IOUtils
-
-import org.apache.spark.{SparkException, SparkEnv}
+import org.apache.spark.{SparkEnv, SparkException}
 import org.apache.spark.io.CompressionCodec
+import org.apache.spark.util.Utils
 
 /**
  * Custom serializer used for generic Avro records. If the user registers the schemas
@@ -38,6 +38,7 @@ import org.apache.spark.io.CompressionCodec
  * schema, as to reduce network IO.
  * Actions like parsing or compressing schemas are computationally expensive so the serializer
  * caches all previously seen values as to reduce the amount of work needed to do.
+ *
  * @param schemas a map where the keys are unique IDs for Avro schemas and the values are the
  *                string representation of the Avro schema, used to decrease the amount of data
  *                that needs to be serialized.
@@ -71,8 +72,11 @@ private[serializer] class GenericAvroSerializer(schemas: Map[Long, String])
   def compress(schema: Schema): Array[Byte] = compressCache.getOrElseUpdate(schema, {
     val bos = new ByteArrayOutputStream()
     val out = codec.compressedOutputStream(bos)
-    out.write(schema.toString.getBytes("UTF-8"))
-    out.close()
+    Utils.tryWithSafeFinally {
+      out.write(schema.toString.getBytes("UTF-8"))
+    } {
+      out.close()
+    }
     bos.toByteArray
   })
 
@@ -82,7 +86,12 @@ private[serializer] class GenericAvroSerializer(schemas: Map[Long, String])
    */
   def decompress(schemaBytes: ByteBuffer): Schema = decompressCache.getOrElseUpdate(schemaBytes, {
     val bis = new ByteArrayInputStream(schemaBytes.array())
-    val bytes = IOUtils.toByteArray(codec.compressedInputStream(bis))
+    val in = codec.compressedInputStream(bis)
+    val bytes = Utils.tryWithSafeFinally {
+      IOUtils.toByteArray(in)
+    } {
+      in.close()
+    }
     new Schema.Parser().parse(new String(bytes, "UTF-8"))
   })
 

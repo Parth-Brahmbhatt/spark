@@ -90,6 +90,7 @@ private[spark] class TorrentBroadcast[T: ClassTag](obj: T, id: Long)
 
   /**
    * Divide the object into multiple blocks and put those blocks in the block manager.
+   *
    * @param value the object to divide
    * @return number of blocks this broadcast variable is divided into
    */
@@ -200,7 +201,11 @@ private object TorrentBroadcast extends Logging {
     val out: OutputStream = compressionCodec.map(c => c.compressedOutputStream(bos)).getOrElse(bos)
     val ser = serializer.newInstance()
     val serOut = ser.serializeStream(out)
-    serOut.writeObject[T](obj).close()
+    Utils.tryWithSafeFinally {
+      serOut.writeObject[T](obj)
+    } {
+      serOut.close()
+    }
     bos.toArrays.map(ByteBuffer.wrap)
   }
 
@@ -214,8 +219,11 @@ private object TorrentBroadcast extends Logging {
     val in: InputStream = compressionCodec.map(c => c.compressedInputStream(is)).getOrElse(is)
     val ser = serializer.newInstance()
     val serIn = ser.deserializeStream(in)
-    val obj = serIn.readObject[T]()
-    serIn.close()
+    val obj = Utils.tryWithSafeFinally {
+      serIn.readObject[T]()
+    } {
+      serIn.close()
+    }
     obj
   }
 

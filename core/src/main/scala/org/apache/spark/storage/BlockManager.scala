@@ -1110,6 +1110,7 @@ private[spark] class BlockManager(
 
   /**
    * Remove all blocks belonging to the given RDD.
+   *
    * @return The number of blocks removed.
    */
   def removeRdd(rddId: Int): Int = {
@@ -1264,7 +1265,12 @@ private[spark] class BlockManager(
       values: Iterator[Any]): Unit = {
     val byteStream = new BufferedOutputStream(outputStream)
     val ser = defaultSerializer.newInstance()
-    ser.serializeStream(wrapForCompression(blockId, byteStream)).writeAll(values).close()
+    val stream = ser.serializeStream(wrapForCompression(blockId, byteStream))
+    Utils.tryWithSafeFinally {
+      stream.writeAll(values)
+    } {
+      stream.close()
+    }
   }
 
   /** Serializes into a byte buffer. */
