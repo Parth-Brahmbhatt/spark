@@ -20,13 +20,15 @@ package org.apache.spark.io
 import java.io.{IOException, InputStream, OutputStream}
 
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.io.compress.{BrotliCodec, CompressorStream, DecompressorStream}
+import org.apache.hadoop.io.compress.brotli.BrotliCompressor
+import org.apache.hadoop.io.compress._
 
 import com.ning.compress.lzf.{LZFInputStream, LZFOutputStream}
 import net.jpountz.lz4.{LZ4BlockInputStream, LZ4BlockOutputStream}
 import org.xerial.snappy.{Snappy, SnappyInputStream, SnappyOutputStream}
 import org.apache.spark.SparkConf
 import org.apache.spark.annotation.DeveloperApi
+import org.apache.spark.Logging
 import org.apache.spark.util.Utils
 
 /**
@@ -46,7 +48,7 @@ trait CompressionCodec {
   def compressedInputStream(s: InputStream): InputStream
 }
 
-private[spark] object CompressionCodec {
+private[spark] object CompressionCodec extends Logging {
 
   private val configKey = "spark.io.compression.codec"
 
@@ -69,6 +71,7 @@ private[spark] object CompressionCodec {
   }
 
   def createCodec(conf: SparkConf, codecName: String): CompressionCodec = {
+    logDebug(s"Creating codec $codecName")
     val codecClass = shortCompressionCodecNames.getOrElse(codecName.toLowerCase, codecName)
     val codec = try {
       val ctor = Utils.classForName(codecClass).getConstructor(classOf[SparkConf])
@@ -154,19 +157,35 @@ class BrotliCompressionCodec(conf: SparkConf) extends CompressionCodec {
   val codec = new BrotliCodec
   codec.setConf(hadoopConf)
 
-  class BrotliCompressorStream(wrapped: OutputStream)
-      extends CompressorStream(wrapped, codec.createCompressor()) {
+  class BrotliCompressorStream(
+      wrapped: OutputStream,
+      brotliCompressor: Compressor = codec.createCompressor())
+    extends CompressorStream(wrapped, brotliCompressor) {
+
+    private var isClosed: Boolean = false
+
     override def close(): Unit = {
-      super.close()
-      compressor.end()
+      if (!isClosed) {
+        super.close()
+        brotliCompressor.end()
+        isClosed = true
+      }
     }
   }
 
-  class BrotliDecompressorStream(wrapped: InputStream)
-      extends DecompressorStream(wrapped, codec.createDecompressor()) {
+  class BrotliDecompressorStream(
+      wrapped: InputStream,
+      brotliDecompressor: Decompressor = codec.createDecompressor())
+    extends DecompressorStream(wrapped, brotliDecompressor) {
+
+    private var isClosed: Boolean = false
+
     override def close(): Unit = {
-      super.close()
-      decompressor.end()
+      if (!isClosed) {
+        super.close()
+        brotliDecompressor.end()
+        isClosed = true;
+      }
     }
   }
 

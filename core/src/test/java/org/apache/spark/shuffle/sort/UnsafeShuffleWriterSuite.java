@@ -21,6 +21,7 @@ import java.io.*;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import org.apache.spark.io.*;
 import scala.*;
 import scala.collection.Iterator;
 import scala.runtime.AbstractFunction1;
@@ -43,10 +44,6 @@ import static org.mockito.Answers.RETURNS_SMART_NULLS;
 import static org.mockito.Mockito.*;
 
 import org.apache.spark.*;
-import org.apache.spark.io.CompressionCodec$;
-import org.apache.spark.io.LZ4CompressionCodec;
-import org.apache.spark.io.LZFCompressionCodec;
-import org.apache.spark.io.SnappyCompressionCodec;
 import org.apache.spark.executor.ShuffleWriteMetrics;
 import org.apache.spark.executor.TaskMetrics;
 import org.apache.spark.network.util.LimitedInputStream;
@@ -389,6 +386,16 @@ public class UnsafeShuffleWriterSuite {
   @Test
   public void mergeSpillsWithFileStreamAndSnappy() throws Exception {
     testMergingSpills(false, SnappyCompressionCodec.class.getName());
+  }
+
+  @Test
+  public void mergeSpillsWithTransferToAndBrotli() throws Exception {
+    testMergingSpills(true, BrotliCompressionCodec.class.getName());
+  }
+
+  @Test
+  public void mergeSpillsWithFileStreamAndBrotli() throws Exception {
+    testMergingSpills(false, BrotliCompressionCodec.class.getName());
   }
 
   @Test
