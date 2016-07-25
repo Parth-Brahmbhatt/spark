@@ -19,18 +19,19 @@ package org.apache.spark.deploy.history
 
 import java.io.{FileNotFoundException, IOException, OutputStream}
 import java.util.UUID
-import java.util.concurrent.{Executors, ExecutorService, TimeUnit}
+import java.util.concurrent.{ExecutorService, Executors, TimeUnit}
 import java.util.zip.{ZipEntry, ZipOutputStream}
 
 import scala.collection.mutable
-
 import com.google.common.io.ByteStreams
 import com.google.common.util.concurrent.{MoreExecutors, ThreadFactoryBuilder}
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.hadoop.hdfs.DistributedFileSystem
 import org.apache.hadoop.hdfs.protocol.HdfsConstants
 import org.apache.hadoop.security.AccessControlException
-
+import org.apache.hadoop.yarn.api.records.ApplicationId
+import org.apache.hadoop.yarn.api.records.YarnApplicationState.{FAILED, FINISHED, KILLED}
+import org.apache.hadoop.yarn.client.api.YarnClient
 import org.apache.spark.{SecurityManager, SparkConf, SparkException}
 import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.internal.Logging
@@ -80,6 +81,8 @@ private[history] class FsHistoryProvider(conf: SparkConf, clock: Clock)
   private val NOT_STARTED = "<Not Started>"
 
   private val SPARK_HISTORY_FS_NUM_REPLAY_THREADS = "spark.history.fs.numReplayThreads"
+
+  private val yarnClient = YarnClient.createYarnClient
 
   // Interval between safemode checks.
   private val SAFEMODE_CHECK_INTERVAL_S = conf.getTimeAsSeconds(
@@ -462,6 +465,26 @@ private[history] class FsHistoryProvider(conf: SparkConf, clock: Clock)
     }
   }
 
+  private def isCompleted(appId: String): Boolean = {
+    val terminalStates = List(FAILED, FINISHED, KILLED)
+    val applicationId = new ApplicationId {override def getId: Int = appId
+
+      override def setId(i: Int): Unit = ???
+
+      override def setClusterTimestamp(l: Long): Unit = ???
+
+      override def getClusterTimestamp: Long = ???
+
+      override def build(): Unit = ???
+    }
+    try {
+      terminalStates.contains(yarnClient.getApplicationReport(applicationId).getYarnApplicationState)
+    } catch {
+      case e: Exception => false
+    }
+    false
+  }
+
   /**
    * Delete event logs from the log directory according to the clean policy defined by the user.
    */
@@ -472,10 +495,11 @@ private[history] class FsHistoryProvider(conf: SparkConf, clock: Clock)
       val now = clock.getTimeMillis()
       val appsToRetain = new mutable.LinkedHashMap[String, FsApplicationHistoryInfo]()
 
+      //
       def shouldClean(attempt: FsApplicationAttemptInfo): Boolean = {
-        now - attempt.lastUpdated > maxAge && attempt.completed
+        now - attempt.lastUpdated > maxAge && (attempt.completed || isCompleted(attempt.appId))
+        //
       }
-
       // Scan all logs from the log directory.
       // Only completed applications older than the specified max age will be deleted.
       applications.values.foreach { app =>
@@ -619,7 +643,8 @@ private[history] class FsHistoryProvider(conf: SparkConf, clock: Clock)
 
   /**
    * String description for diagnostics
-   * @return a summary of the component state
+    *
+    * @return a summary of the component state
    */
   override def toString: String = {
     val header = s"""
@@ -634,7 +659,8 @@ private[history] class FsHistoryProvider(conf: SparkConf, clock: Clock)
 
   /**
    * Look up an application attempt
-   * @param appId application ID
+    *
+    * @param appId application ID
    * @param attemptId Attempt ID, if set
    * @return the matching attempt, if found
    */
@@ -651,7 +677,8 @@ private[history] class FsHistoryProvider(conf: SparkConf, clock: Clock)
    *
    * This is a very cheap operation -- the work of loading the new attempt was already done
    * by [[checkForLogs]].
-   * @param appId application to probe
+    *
+    * @param appId application to probe
    * @param attemptId attempt to probe
    * @param prevFileSize the file size of the logs for the currently displayed UI
    */
@@ -711,7 +738,8 @@ private class FsApplicationAttemptInfo(
 
 /**
  * Application history information
- * @param id application ID
+  *
+  * @param id application ID
  * @param name application name
  * @param attempts list of attempts, most recent first.
  */
